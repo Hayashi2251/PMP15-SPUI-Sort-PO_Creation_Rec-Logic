@@ -88,21 +88,21 @@ page 60410 "PMP15 Sortation PO Creation"
                     {
                         ApplicationArea = All;
                         Caption = 'RM Item No.';
-                        ToolTip = 'Specifies the value of the RM Item No. field.', Comment = '%';
+                        ToolTip = 'Specifies the value of the Raw Material Item No. field.', Comment = '%';
                         Editable = false;
                     }
                     field("RM Variant Code"; Rec."RM Variant Code")
                     {
                         ApplicationArea = All;
                         Caption = 'RM Variant No.';
-                        ToolTip = 'Specifies the value of the RM Variant Code field.', Comment = '%';
+                        ToolTip = 'Specifies the value of the Raw Material Variant Code field.', Comment = '%';
                         Editable = false;
                     }
                     field("RM Item Description"; Rec."RM Item Description")
                     {
                         ApplicationArea = All;
                         Caption = 'RM Item Description';
-                        ToolTip = 'Specifies the value of the RM Item Description field.', Comment = '%';
+                        ToolTip = 'Specifies the value of the Raw Material Item Description field.', Comment = '%';
                         Editable = false;
                     }
                     field("Lot No."; Rec."Lot No.")
@@ -178,33 +178,13 @@ page 60410 "PMP15 Sortation PO Creation"
                         Caption = 'Unit of Measure Code';
                         ToolTip = 'Specifies the value of the Unit of Measure Code field.', Comment = '%';
                         Editable = false;
-                        // trigger OnLookup(var Text: Text): Boolean
-                        // var
-                        //     UoMRec: Record "Unit of Measure";
-                        // begin
-                        //     UoMRec.Reset();
-                        //     if Page.RunModal(Page::"Units of Measure", UoMRec) = Action::LookupOK then
-                        //         UoMCode := UoMRec.Code;
-                        // end;
                     }
-                    // field(Status; Status)
-                    // {
-                    //     ApplicationArea = All;
-                    //     Caption = 'Status';
-                    //     ToolTip = 'Specifies the value of the Production Order Status field.', Comment = '%';
-                    //     Editable = false;
-                    // }
                     field("Reference No."; Rec."Reference No.")
                     {
                         ApplicationArea = All;
                         Caption = 'Reference No.';
                         ToolTip = 'Specifies the value of the Reference No. field.', Comment = '%';
                     }
-                    // field("PMP15 Item Owner Internal"; Rec."PMP15 Item Owner Internal")
-                    // {
-                    //     ApplicationArea = All;
-                    //     Caption = 'Item Owner Internal';
-                    // }
                 }
             }
         }
@@ -223,53 +203,14 @@ page 60410 "PMP15 Sortation PO Creation"
                 InFooterBar = true;
                 trigger OnAction()
                 var
-                    ProdOrderLine: Record "Prod. Order Line";
-                    ProdOrderComp: Record "Prod. Order Component";
                 begin
                     ProdOrder.Reset();
-                    ProdOrderLine.Reset();
-                    ProdOrderComp.Reset();
-                    if Rec.Quantity = 0 then begin
-                        Error('Quantity cannot be empty. Please select an existing unsorted Lot No. before creating a Sortation Production Order.');
+                    ValidateInputBeforePosting();
+                    if SortProdOrdMgmt.SimulateInsertSuccess(tempProdOrder, Rec) then begin
+                        SortProdOrdMgmt.SortProdOrdCreationPost(ProdOrder, tempProdOrder, Rec);
                     end;
-                    if SimulateInsertSuccess(tempProdOrder) then begin
-                        ProdOrder.Init();
-                        ProdOrder.Copy(tempProdOrder);
-                        ProdOrder.Insert();
-                        ProdOrder.Validate("Starting Date", WorkDate());
-                        ProdOrder.Validate("Starting Date-Time", CurrentDateTime);
-                        ProdOrder.Validate("Ending Date-Time", CurrentDateTime);
-                        ProdOrder.Validate("Due Date", CalcDate('<+2D>', WorkDate()));
-                        ProdOrder.Modify();
-                        // ====================================================================
-                        RefreshProdOrder.InitializeRequest(1, true, true, true, false);
-                        RefreshProdOrder.SetHideValidationDialog(true);
-                        RefreshProdOrder.Run();
-                        // ====================================================================
-                        ProdOrderLine.SetRange("Prod. Order No.", ProdOrder."No.");
-                        ProdOrderLine.SetFilter("Item No.", '<>%1', '');
-                        if ProdOrder."PMP15 SOR Rework" then begin
-                            if ProdOrderLine.FindSet() then
-                                repeat
-                                    ProdOrderComp.SetRange("Prod. Order No.", ProdOrder."No.");
-                                    ProdOrderComp.SetRange("Prod. Order Line No.", ProdOrderLine."Line No.");
-                                    ProdOrderComp.SetRange("Variant Code", Rec."Unsorted Variant Code");
-                                    ProdOrderComp.ModifyAll("PMP15 Unsorted Item", true);
-                                    ProdOrderComp.SetRange("PMP15 Unsorted Item", true);
-                                    ProdOrderComp.ModifyAll("Item No.", ProdOrderLine."Item No.");
-                                    ProdOrderComp.ModifyAll("Quantity per", 1);
-                                until ProdOrderLine.Next() = 0;
-                        end else begin
-                            if ProdOrderLine.FindFirst() then begin
-                                ProdOrderComp.SetRange("Prod. Order No.", ProdOrder."No.");
-                                ProdOrderComp.SetRange("Prod. Order Line No.", ProdOrderLine."Line No.");
-                                ProdOrderComp.SetRange("Item No.", Rec."Unsorted Item No.");
-                                ProdOrderComp.SetRange("Variant Code", Rec."Unsorted Variant Code");
-                                ProdOrderComp.ModifyAll("PMP15 Unsorted Item", true);
-                            end;
-                        end;
-                    end;
-                    // CurrPage.Close();
+                    SortProdOrdPageCard.SetRecord(ProdOrder);
+                    SortProdOrdPageCard.Run();
                 end;
             }
             action(Cancel)
@@ -284,62 +225,54 @@ page 60410 "PMP15 Sortation PO Creation"
                     CurrPage.Close();
                 end;
             }
-            // action(Release)
-            // {
-            //     ApplicationArea = All;
-            //     Caption = 'Release';
-            //     Image = ReleaseDoc;
-            //     trigger OnAction()
-            //     begin
-            //         CurrPage.Update();
-            //         NewStatus := Status::Released;
-            //         NewPostingDate := WorkDate();
-            //         NewUpdateUnitCost := true;
-            //         ProdOrderStatusMgmt.ChangeProdOrderStatus(ProdOrder, NewStatus, NewPostingDate, NewUpdateUnitCost);
-            //         Commit();
-            //         Status := ProdOrder.Status;
-            //         Message('The Production Order status has been successfully changed.');
-            //     end;
-            // }
-            // action(Completed)
-            // {
-            //     ApplicationArea = All;
-            //     Caption = 'Completed';
-            //     Image = Completed;
-            //     trigger OnAction()
-            //     begin
-            //         // 
-            //     end;
-            // }
+            action(Release)
+            {
+                ApplicationArea = All;
+                Caption = 'Release';
+                Image = ReleaseDoc;
+                InFooterBar = true;
+                Visible = Release_Visibility;
+                trigger OnAction()
+                begin
+                    CurrPage.Update();
+                    if (ProdOrder."No." <> '') then begin
+                        Status := SortProdOrdMgmt.SortChangeProdOrderStatus(ProdOrder, NewStatus::Released, WorkDate(), true);
+                        Message('The Production Order status has been successfully changed.');
+                    end;
+                end;
+            }
+            action(Completed)
+            {
+                ApplicationArea = All;
+                Caption = 'Completed';
+                Image = Completed;
+                InFooterBar = true;
+                Visible = Completed_Visibility;
+                trigger OnAction()
+                begin
+                    SortProdOrdMgmt.SortProdOrdCreationCompleted(ProdOrder, InvDocHeader);
+                end;
+            }
         }
-        // area(Promoted)
-        // {
-        //     group(Category_Process)
-        //     {
-        //         actionref(Post_Promoted; Post) { }
-        //         actionref(Release_Promoted; Release) { }
-        //         actionref(Completed_Promoted; Completed) { }
-        //     }
-        // }
     }
     var
-        NoSeriesMgmt: Codeunit "No. Series";
-        ProdOrderStatusMgmt: Codeunit "Prod. Order Status Management";
         tempProdOrder: Record "Production Order" temporary;
+        PMPCodesOWNINT: Record "PMP04 PMP Codes";
+        SORStep_Code: Code[50];
+
+    protected var
+        NoSeriesMgmt: Codeunit "No. Series";
+        SortProdOrdMgmt: Codeunit "PMP15 Sortation PO Mgmt";
+        SortProdOrdPageCard: Page "PMP15 Sortation Prod. Order";
+        ConfirmationPage: Page "PMP02 Confirmation Page";
         ProdOrder: Record "Production Order";
         ExtCompanySetup: Record "PMP07 Extended Company Setup";
-        PMPCodesOWNINT: Record "PMP04 PMP Codes";
-        RefreshProdOrder: Report "Refresh Production Order";
-        ChangeStatusForm: Page "Change Status on Prod. Order";
+        InvDocHeader: Record "Invt. Document Header";
         TarreWeight: Decimal;
         UoMCode: Code[10];
-        // Status: Boolean;
-        SORStep_Code: Code[50];
         CurrentStep: Integer;
         Status, NewStatus : Enum "Production Order Status";
-        NewPostingDate: Date;
-        NewUpdateUnitCost: Boolean;
-        IsSetRecfromProdOrder: Boolean;
+        IsSetRecfromProdOrder, Release_Visibility, Completed_Visibility : Boolean;
 
     trigger OnOpenPage()
     begin
@@ -354,6 +287,9 @@ page 60410 "PMP15 Sortation PO Creation"
             Status := Status::"Firm Planned";
             Rec.Insert();
         end;
+
+        Release_Visibility := ProdOrder."No." <> '';
+        Completed_Visibility := ProdOrder."No." <> '';
     end;
 
     trigger OnClosePage()
@@ -362,42 +298,16 @@ page 60410 "PMP15 Sortation PO Creation"
         Clear(Status);
     end;
 
-    local procedure SimulateInsertSuccess(var tempProdOrderRec: Record "Production Order" temporary) IsInsertSuccess: Boolean
-    begin
-        tempProdOrderRec.DeleteAll();
-        tempProdOrderRec.Reset();
-        tempProdOrderRec.Init();
-        tempProdOrderRec."No." := NoSeriesMgmt.PeekNextNo(ExtCompanySetup."PMP15 Sort-Prod. Order Nos.", WorkDate());
-        tempProdOrderRec."No. Series" := ExtCompanySetup."PMP15 Sort-Prod. Order Nos.";
-        tempProdOrderRec.Status := tempProdOrderRec.Status::"Firm Planned";
-        tempProdOrderRec."Creation Date" := WorkDate();
-        tempProdOrderRec."Last Date Modified" := WorkDate();
-        tempProdOrderRec.Validate("Source Type", tempProdOrderRec."Source Type"::Item);
-        tempProdOrderRec.Validate("Source No.", Rec."Sorted Item No.");
-        tempProdOrderRec.Validate("Variant Code", Rec."Sorted Variant Code");
-        tempProdOrderRec.Validate("Location Code", ExtCompanySetup."PMP15 SOR Location Code");
-        tempProdOrderRec.Validate(Quantity, Rec.Quantity);
-        // tempProdOrderRec.Validate("PMP15 RM Item No.", Rec."RM Item No.");
-        // tempProdOrderRec.Validate("PMP15 RM Item Description", Rec."RM Item Description");
-        // tempProdOrderRec.Validate("PMP15 RM Variant Code", Rec."RM Variant Code");
-        tempProdOrderRec."PMP15 Lot No." := Rec."Lot No.";
-        tempProdOrderRec."PMP15 Tarre Weight (Kg)" := Rec."Tarre Weight (Kg)";
-        tempProdOrderRec."PMP15 Production Unit" := tempProdOrderRec."PMP15 Production Unit"::"SOR-Sortation";
-        tempProdOrderRec."PMP15 SOR Rework" := Rec.Rework;
-        tempProdOrderRec."PMP15 Reference No." := Rec."Reference No.";
-        tempProdOrderRec."PMP04 Item Owner Internal" := ExtCompanySetup."PMP15 SOR Item Owner Internal";
-        exit(tempProdOrderRec.Insert());
-
-        // if tempProdOrder.Insert() then begin
-        // Message('Nilai yang didapatkan untuk Prod. Order ialah: %1 | Status: %2 | Source No: %3 | Variant Code: %4 | Location Code: %5 | Qty: %6 | Lot No: %7 | Tarre Kgs: %8 | ProdUnit: %9 | SOR Rew: %10', tempProdOrder."No.", tempProdOrder.Status, tempProdOrder."Source No.", tempProdOrder."Variant Code", tempProdOrder."Location Code", tempProdOrder.Quantity, tempProdOrder."PMP15 Lot No.", tempProdOrder."PMP15 Tarre Weight (Kg)", tempProdOrder."PMP15 Production Unit", tempProdOrder."PMP15 SOR Rework", tempProdOrder."PMP15 Reference No.");
-        // end;
-    end;
-
+    /// <summary>Assigns the provided Production Order record to the internal variable.</summary>
+    /// <param name="ProdOrderRec">Production Order record to be stored for later use.</param>
     procedure SetProdOrder(var ProdOrderRec: Record "Production Order")
     begin
         ProdOrder := ProdOrderRec;
     end;
 
+    /// <summary>Initializes and inserts a new Sortation Production Order record based on data from a Production Order.</summary>
+    /// <remarks>Copies key fields such as item, variant, lot number, quantity, and related unsorted component information from the given Production Order and inserts the resulting record.</remarks>
+    /// <param name="ProdOrderRec">Production Order record used as the source for populating the new Sortation Production Order record.</param>
     procedure SetRecfromProdOrder(var ProdOrderRec: Record "Production Order")
     var
         ProdOrderComp: Record "Prod. Order Component";
@@ -422,7 +332,18 @@ page 60410 "PMP15 Sortation PO Creation"
             Rec.Validate("Unsorted Item No.", ProdOrderComp."Item No.");
             Rec.Validate("Unsorted Variant Code", ProdOrderComp."Variant Code");
         end;
-        // 
         Rec.Insert();
+    end;
+
+    local procedure ValidateInputBeforePosting()
+    begin
+        if Rec.Quantity = 0 then
+            Error('Quantity cannot be empty. Please select an existing unsorted Lot No. before creating a Sortation Production Order.');
+
+        if (Rec."Sorted Item No." = '') or (Rec."Sorted Variant Code" = '') then
+            Error('Please complete both the Sorted Item No. and Sorted Variant Code fields before proceeding.');
+
+        if (Rec."Unsorted Item No." = '') or (Rec."RM Item No." = '') then
+            Error('Please complete both the Unsorted Item No. and RM Item No. fields before proceeding.');
     end;
 }

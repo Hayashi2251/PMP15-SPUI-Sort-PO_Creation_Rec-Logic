@@ -22,12 +22,13 @@ page 60413 "PMP15 Sort-Prod.Order List"
                     ToolTip = 'Specifies the value of the No. field.';
                     trigger OnDrillDown()
                     var
-                        // SORProdOrderPage: Page "PMP15 Sortation Prod. Order";
-                        SORProdOrderPage: Page "PMP15 Sortation PO Creation";
+                        SORProdOrderPage: Page "PMP15 Sortation Prod. Order";
+                    // SORProdOrderPage: Page "PMP15 Sortation PO Creation";
                     begin
-                        // SORProdOrderPage.SetRecord(Rec);
-                        SORProdOrderPage.SetProdOrder(Rec);
-                        SORProdOrderPage.SetRecfromProdOrder(Rec);
+                        // SORProdOrderPage.SetProdOrder(Rec);
+                        // SORProdOrderPage.SetRecfromProdOrder(Rec);
+                        // =================================
+                        SORProdOrderPage.SetRecord(Rec);
                         SORProdOrderPage.Run();
                     end;
                 }
@@ -115,11 +116,9 @@ page 60413 "PMP15 Sort-Prod.Order List"
                 var
                     SORProdOrderRecordingPage: Page "PMP15 Sort-Prod.Ord Recording";
                 begin
-                    tempSORProdOrdRecord.Init();
-                    tempSORProdOrdRecord."Sortation Prod. Order No." := Rec."No.";
                     SORProdOrderRecordingPage.SetProdOrder(Rec);
-                    SORProdOrderRecordingPage.SetRecord(tempSORProdOrdRecord);
-                    SORProdOrderRecordingPage.RunModal();
+                    // SORProdOrderRecordingPage.SetRecord(tempSORProdOrdRecord);
+                    SORProdOrderRecordingPage.Run();
                 end;
             }
         }
@@ -136,16 +135,17 @@ page 60413 "PMP15 Sort-Prod.Order List"
     var
         UoMCode: Code[10];
         ProdOrderLine: Record "Prod. Order Line";
-        tempSORProdOrdRecord: Record "PMP15 Sortation PO Recording" temporary;
+        // tempSORProdOrdRecord: Record "PMP15 Sortation PO Recording" temporary;
 
     trigger OnOpenPage()
     var
         ExtCompanySetup: Record "PMP07 Extended Company Setup";
     begin
         ExtCompanySetup.Get();
+        Rec.FilterGroup(2);
         Rec.SetRange("PMP04 Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
-        // Rec.SetFilter("PMP05 Production Type", '%1 | %2', 'SOR*', 'Sortation');
         Rec.SetRange("PMP15 Production Unit", Rec."PMP15 Production Unit"::"SOR-Sortation");
+        Rec.FilterGroup(0);
     end;
 
     trigger OnAfterGetRecord()

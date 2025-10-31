@@ -1,7 +1,20 @@
 page 60419 "PMP15 Lot No by Bin Factbox"
 {
+    // VERSION PMP15 
+
+    // VERSION
+    // Version List       Name
+    // ============================================================================================================
+    // PMP15              PMP SPUI - Sort-PO Creation & Recording (Logic)
+    // 
+    // PAGE
+    // Date        Developer  Version List  Trigger                     Description
+    // ============================================================================================================
+    // 2025/09/12  SW         PMP15         -                           Create Page
+    // 
+
     ApplicationArea = All;
-    Caption = 'PMP15 Lot No by Bin Factbox';
+    Caption = 'Lot No by Bin Factbox';
     // PageType = ListPart;
     PageType = List;
     SourceTable = "Lot Bin Buffer";
@@ -37,6 +50,9 @@ page 60419 "PMP15 Lot No by Bin Factbox"
         }
     }
 
+    /// <summary>Copies records from a temporary Lot Bin Buffer into the current record instance.</summary>
+    /// <remarks>Iterates through all entries in the provided temporary record and inserts them into the main record.</remarks>
+    /// <param name="tempRec">Temporary Lot Bin Buffer record to be copied into the current buffer.</param>
     procedure SetRecord(var tempRec: Record "Lot Bin Buffer" temporary)
     begin
         if tempRec.FindSet() then
@@ -46,6 +62,11 @@ page 60419 "PMP15 Lot No by Bin Factbox"
             until tempRec.Next() = 0;
     end;
 
+    /// <summary>Fills the temporary Lot Bin Buffer with lot and bin data for a specific item, variant, and location.</summary>
+    /// <remarks>Retrieves lot information using the "Lot Numbers by Bin" query, aggregates quantities, and populates the temporary buffer for lookup display or processing.</remarks>
+    /// <param name="ItemNo">Specifies the item number to retrieve lot and bin data for.</param>
+    /// <param name="VariantCode">Specifies the item variant code to filter results.</param>
+    /// <param name="LocationCode">Specifies the location code to narrow down the lot and bin search scope.</param>
     procedure FillTempTable(ItemNo: Code[20]; VariantCode: Code[10]; LocationCode: Code[10])
     var
         LotNosByBinCode: Query "Lot Numbers by Bin";

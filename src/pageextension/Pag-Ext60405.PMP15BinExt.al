@@ -23,10 +23,14 @@ pageextension 60405 "PMP15 Bin Ext" extends Bins
                 ApplicationArea = All;
                 Caption = 'Bin Type';
                 trigger OnValidate()
+                var
+                    BinRec: Record Bin;
                 begin
-                    if Rec.CountSORSteps() > 0 then begin
+                    if (Rec.CountSORSteps() > 0) AND (Rec."PMP15 Bin Type" <> Rec."PMP15 Bin Type"::" ") then begin
                         Clear(Rec."PMP15 Bin Type");
-                        Error('Bin Step-Types already exist for this Bin.');
+                        BinRec.SetRange("PMP15 Bin Type", Rec."PMP15 Bin Type");
+                        if BinRec.FindFirst() then;
+                        Error('Bin Step-Types %1 already exist for this Bin, as in the Bin.%2 in %3 Location.', Rec."PMP15 Bin Type", BinRec.Code, BinRec."Location Code");
                     end;
                 end;
             }

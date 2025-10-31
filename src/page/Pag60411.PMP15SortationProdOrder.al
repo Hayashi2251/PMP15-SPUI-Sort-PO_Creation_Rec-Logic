@@ -14,7 +14,8 @@ page 60411 "PMP15 Sortation Prod. Order"
     // 
     ApplicationArea = All;
     Caption = 'Sortation Prod. Order';
-    PageType = Card;
+    PageType = Document;
+    RefreshOnActivate = true;
     SourceTable = "Production Order";
 
     layout
@@ -36,6 +37,7 @@ page 60411 "PMP15 Sortation Prod. Order"
                     ApplicationArea = All;
                     Caption = 'Status';
                     ToolTip = 'Specifies the value of the Status field.';
+                    Style = Strong;
                     Editable = false;
                 }
                 field("Sorted Item No."; Rec."Source No.")
@@ -125,7 +127,7 @@ page 60411 "PMP15 Sortation Prod. Order"
                 field(Quantity; Rec.Quantity)
                 {
                     ApplicationArea = All;
-                    Caption = 'Rework';
+                    Caption = 'Quantity';
                     ToolTip = 'Specifies the value of the Rework field.';
                     Editable = false;
                 }
@@ -137,11 +139,38 @@ page 60411 "PMP15 Sortation Prod. Order"
                     Editable = false;
                 }
             }
+            part(ProdOrderLines; "PMP15 Sort-Prod. Order Subform")
+            {
+                ApplicationArea = All;
+                SubPageLink = "Prod. Order No." = field("No.");
+                UpdatePropagation = Both;
+            }
             // part(UnsortedItemLine; "PMP15 Sort-Prod.Order. Subform")
             // {
             //     ApplicationArea = All;
             //     SubPageLink = "Prod. Order No." = field("No."), "PMP15 Unsorted Item" = const(true);
             // }
+        }
+        area(factboxes)
+        {
+            systempart(Control1900383207; Links)
+            {
+                ApplicationArea = RecordLinks;
+                Visible = false;
+            }
+            systempart(Control1905767507; Notes)
+            {
+                ApplicationArea = Notes;
+                Visible = true;
+            }
+            part("Attached Documents List"; "Doc. Attachment List Factbox")
+            {
+                ApplicationArea = Manufacturing;
+                Caption = 'Documents';
+                UpdatePropagation = Both;
+                SubPageLink = "Table ID" = const(Database::"Production Order"),
+                              "No." = field("No.");
+            }
         }
     }
 
@@ -160,7 +189,9 @@ page 60411 "PMP15 Sortation Prod. Order"
                     Image = ReleaseDoc;
                     trigger OnAction()
                     begin
-                        // 
+                        CurrPage.Update();
+                        Status := SortProdOrdMgmt.SortChangeProdOrderStatus(Rec, NewStatus::Released, WorkDate(), true);
+                        Message('The Production Order status has been successfully changed.');
                     end;
                 }
                 action(Complete)
@@ -170,7 +201,7 @@ page 60411 "PMP15 Sortation Prod. Order"
                     Image = Completed;
                     trigger OnAction()
                     begin
-                        // 
+                        SortProdOrdMgmt.SortProdOrdCreationCompleted(Rec, InvDocHeader);
                     end;
                 }
             }
@@ -179,9 +210,29 @@ page 60411 "PMP15 Sortation Prod. Order"
                 ApplicationArea = All;
                 Caption = 'Inventory Shipment';
                 Image = Inventory;
+                Visible = InvtShip_Visibility;
                 trigger OnAction()
                 begin
-                    // 
+                    InvDocHeader.SetRange("PMP15 Production Order No.", Rec."No.");
+                    if InvDocHeader.FindFirst() then begin
+                        InvShipmentPageDoc.SetRecord(InvDocHeader);
+                        InvShipmentPageDoc.Run();
+                    end;
+                end;
+            }
+            action("Posted Inventory Shipment")
+            {
+                ApplicationArea = All;
+                Caption = 'Posted Inventory Shipment';
+                Image = PostedInventoryPick;
+                Visible = PostedInvtShip_Visibility;
+                trigger OnAction()
+                begin
+                    InvShipHeader.SetRange("PMP15 Production Order No.", Rec."No.");
+                    if InvShipHeader.FindFirst() then begin
+                        PstdInvShipPageDoc.SetRecord(InvShipHeader);
+                        PstdInvShipPageDoc.Run();
+                    end;
                 end;
             }
             action("Change Status")
@@ -191,7 +242,8 @@ page 60411 "PMP15 Sortation Prod. Order"
                 Image = ChangeStatus;
                 trigger OnAction()
                 begin
-                    // 
+                    CurrPage.Update();
+                    CODEUNIT.Run(CODEUNIT::"Prod. Order Status Management", Rec);
                 end;
             }
             action("Job Card")
@@ -201,22 +253,57 @@ page 60411 "PMP15 Sortation Prod. Order"
                 Image = Job;
                 trigger OnAction()
                 begin
-                    // 
+                    ManuPrintReport.PrintProductionOrder(Rec, 0);
                 end;
+            }
+        }
+        area(Promoted)
+        {
+            group(Category_Process)
+            {
+                group(Sortation_Status)
+                {
+                    Caption = 'Sortation Status';
+                    ShowAs = SplitButton;
+                    actionref(Release_Promoted; Release) { }
+                    actionref(Complete_Promoted; Complete) { }
+                }
+                group(Category_Category5)
+                {
+                    Caption = 'Inventory Shipment';
+                    actionref(InventoryShipment_Promoted; "Inventory Shipment") { }
+                    actionref(PostedInventoryShipment_Promoted; "Posted Inventory Shipment") { }
+                }
+                actionref(ChangeStatus_Promoted; "Change Status") { }
+                actionref(JobCard_Promoted; "Job Card") { }
             }
         }
     }
 
     var
+        SortProdOrdMgmt: Codeunit "PMP15 Sortation PO Mgmt";
+        ProdOrderStatusMgmt: Codeunit "Prod. Order Status Management";
+        ManuPrintReport: Codeunit "Manu. Print Report";
         ProdOrdComp: Record "Prod. Order Component";
         ProdOrdLine: Record "Prod. Order Line";
+        InvDocHeader: Record "Invt. Document Header";
+        InvShipHeader: Record "Invt. Shipment Header"; // Posted Invt. Shipment
+        InvShipmentPageDoc: Page "Invt. Shipment";
+        PstdInvShipPageDoc: Page "Posted Invt. Shipment";
         UnSORItemNo: Code[20];
-        UnSORVariantCode: Code[10];
         UnSORItemDesc: Text;
-        UoMCode: Code[10];
+        UoMCode, UnSORVariantCode : Code[10];
+        Status, NewStatus : Enum "Production Order Status";
+        NewPostingDate: Date;
+        NewUpdateUnitCost, InvtShip_Visibility, PostedInvtShip_Visibility : Boolean;
 
     trigger OnAfterGetCurrRecord()
     begin
+        InvDocHeader.SetRange("PMP15 Production Order No.", Rec."No.");
+        InvtShip_Visibility := InvDocHeader.FindFirst();
+        InvShipHeader.SetRange("PMP15 Production Order No.", Rec."No.");
+        PostedInvtShip_Visibility := InvShipHeader.FindFirst();
+
         ProdOrdComp.Reset();
         ProdOrdComp.SetRange("Prod. Order No.", Rec."No.");
         ProdOrdComp.SetRange("PMP15 Unsorted Item", true);

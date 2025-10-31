@@ -81,6 +81,36 @@ pageextension 60426 "PMP15 Ext. Company Setup Ext" extends "PMP07 Extended Compa
                     Caption = 'SOR Item Reclass. Journal Batch';
                     ToolTip = 'Specifies the Item Journal Batch to be used for Sortation Item Reclassification. The list is filtered by the selected SOR Item Reclass. Journal Template.';
                 }
+                field("PMP15 SOR Assembly Order Nos"; Rec."PMP15 SOR Assembly Order Nos")
+                {
+                    ApplicationArea = All;
+                    Caption = 'SOR Assembly Order Nos.';
+                    ToolTip = 'Specifies the number series used for Assembly Orders in the Sortation process.';
+                }
+                field("PMP15 SOR Pstd-Asmbly Ord. Nos"; Rec."PMP15 SOR Pstd-Asmbly Ord. Nos")
+                {
+                    ApplicationArea = All;
+                    Caption = 'SOR Posted Assembly Order Nos.';
+                    ToolTip = 'Specifies the number series used for posted Assembly Orders in the Sortation process.';
+                }
+                field("PMP15 SOR Inv. Shipment Nos"; Rec."PMP15 SOR Inv. Shipment Nos")
+                {
+                    ApplicationArea = All;
+                    Caption = 'SOR Inventory Shipment Nos.';
+                    ToolTip = 'Specifies the number series used for Inventory Shipments in the Sortation process.';
+                }
+                field("PMP15 SOR Pstd-Inv. Shipment"; Rec."PMP15 SOR Pstd-Inv. Shipment")
+                {
+                    ApplicationArea = All;
+                    Caption = 'SOR Posted Inventory Shipment';
+                    ToolTip = 'Specifies the number series used for posted Inventory Shipments in the Sortation process.';
+                }
+                field("PMP15 SOR Invt.Ship.Reason"; Rec."PMP15 SOR Invt.Ship.Reason")
+                {
+                    ApplicationArea = All;
+                    Caption = 'SOR Invt. Shipment Reason Code';
+                    ToolTip = 'Specifies the reason code used for Inventory Shipment transactions in the Sortation process.';
+                }
             }
         }
     }
