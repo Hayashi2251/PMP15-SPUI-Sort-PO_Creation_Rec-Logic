@@ -111,6 +111,18 @@ pageextension 60426 "PMP15 Ext. Company Setup Ext" extends "PMP07 Extended Compa
                     Caption = 'SOR Invt. Shipment Reason Code';
                     ToolTip = 'Specifies the reason code used for Inventory Shipment transactions in the Sortation process.';
                 }
+                field("PMP15 SOR Inspection Pkg. Nos."; Rec."PMP15 SOR Inspection Pkg. Nos.")
+                {
+                    ApplicationArea = All;
+                    Caption = 'SOR Inspection Packing List Nos';
+                    ToolTip = 'Specifies the number series used to assign numbers to SOR inspection packing lists.';
+                }
+                field("PMP15 SOR Inspec Prod.Ord Nos."; Rec."PMP15 SOR Inspec Prod.Ord Nos.")
+                {
+                    ApplicationArea = All;
+                    Caption = 'SOR Prod. Order Packing List Nos';
+                    ToolTip = 'Specifies the number series used to assign numbers to SOR production order packing lists.';
+                }
             }
         }
     }

@@ -205,7 +205,7 @@ page 60410 "PMP15 Sortation PO Creation"
                 var
                 begin
                     ProdOrder.Reset();
-                    ValidateInputBeforePosting();
+                    SortProdOrdMgmt.ValidateInputBeforePosting(Rec);
                     if SortProdOrdMgmt.SimulateInsertSuccess(tempProdOrder, Rec) then begin
                         SortProdOrdMgmt.SortProdOrdCreationPost(ProdOrder, tempProdOrder, Rec);
                     end;
@@ -262,6 +262,7 @@ page 60410 "PMP15 Sortation PO Creation"
 
     protected var
         NoSeriesMgmt: Codeunit "No. Series";
+        PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
         SortProdOrdMgmt: Codeunit "PMP15 Sortation PO Mgmt";
         SortProdOrdPageCard: Page "PMP15 Sortation Prod. Order";
         ConfirmationPage: Page "PMP02 Confirmation Page";
@@ -277,10 +278,10 @@ page 60410 "PMP15 Sortation PO Creation"
     trigger OnOpenPage()
     begin
         ExtCompanySetup.Get();
-        if (ExtCompanySetup."PMP15 Sort-Prod. Order Nos." = '') OR (ExtCompanySetup."PMP15 SOR Location Code" = '') then begin
-            Message('The "Sortation Prod. Order Nos." No Series or "SOR Location Code" in the Extended Company Setup is not defined. Please configure it before using Sortation - Prod. Order Creation or Recording.');
-        end;
-        // ============================================
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Item Owner Internal"));
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 Sort-Prod. Order Nos."));
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Location Code"));
+
         if not IsSetRecfromProdOrder then begin
             Rec.Init();
             Rec."PMP15 Item Owner Internal" := ExtCompanySetup."PMP15 SOR Item Owner Internal";
@@ -333,17 +334,5 @@ page 60410 "PMP15 Sortation PO Creation"
             Rec.Validate("Unsorted Variant Code", ProdOrderComp."Variant Code");
         end;
         Rec.Insert();
-    end;
-
-    local procedure ValidateInputBeforePosting()
-    begin
-        if Rec.Quantity = 0 then
-            Error('Quantity cannot be empty. Please select an existing unsorted Lot No. before creating a Sortation Production Order.');
-
-        if (Rec."Sorted Item No." = '') or (Rec."Sorted Variant Code" = '') then
-            Error('Please complete both the Sorted Item No. and Sorted Variant Code fields before proceeding.');
-
-        if (Rec."Unsorted Item No." = '') or (Rec."RM Item No." = '') then
-            Error('Please complete both the Unsorted Item No. and RM Item No. fields before proceeding.');
     end;
 }

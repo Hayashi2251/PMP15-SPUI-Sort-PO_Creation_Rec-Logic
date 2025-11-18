@@ -12,7 +12,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
     // ============================================================================================================
     // 2025/09/12  SW         PMP15         -                           Create Page
     // 
-    
+
     ApplicationArea = All;
     Caption = 'Sortation Prod. Order Recording';
     PageType = NavigatePage;
@@ -929,6 +929,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
         ExtCompanySetup: Record "PMP07 Extended Company Setup";
         SORStep_Step, ReturnSORStep_Step : Enum "PMP15 Sortation Step Enum";
         SORProdOrdMgmt: Codeunit "PMP15 Sortation PO Mgmt";
+        PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
         SORStep_Code, ReturnSORStep_Code : Code[50];
         CurrentStep: Integer;
         IsSetRecfromProdOrder: Boolean;
@@ -938,6 +939,8 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
         SORStep_Step := SORStep_Step::"0";
         Clear(SORStep_Code);
         ExtCompanySetup.Get();
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Item Owner Internal"));
+
         if IsSetRecfromProdOrder then begin
             Rec.Init();
             Rec."Posting Date" := WorkDate();
@@ -999,48 +1002,20 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
             Error('Tobacco Type must be specified before posting.');
         end;
 
-        if (ExtCompanySetup."PMP15 SOR Assembly Order Nos" = '') AND (SORStep_Step = SORStep_Step::"0") then begin
-            ErrInfo.DataClassification(DataClassification::SystemMetadata);
-            ErrInfo.ErrorType(ErrorType::Client);
-            ErrInfo.Verbosity(Verbosity::Error);
-            ErrInfo.Title := 'Setup Required';
-            ErrInfo.Message := 'The SOR Assembly Order No. Series has not been defined. Please open the Extended Company Setup page and complete the required configuration before continuing.';
-            ErrInfo.AddAction('Open Ext. Company Setup', Codeunit::"PMP15 Sortation PO Mgmt", 'OpenExtCompanySetupPage');
-            Error(ErrInfo);
-            Clear(ErrInfo);
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Location Code"));
+        if (SORStep_Step = SORStep_Step::"0") then begin
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Assembly Order Nos"));
         end;
 
-        if (ExtCompanySetup."PMP15SORItemReclass.Jnl.Batch" = '') OR (ExtCompanySetup."PMP15SORItemReclass.Jnl.Tmpt." = '') AND ((SORStep_Step = SORStep_Step::"1") OR ((SORStep_Step = SORStep_Step::"2")) OR (SORStep_Step = SORStep_Step::"3")) then begin
-            ErrInfo.DataClassification(DataClassification::SystemMetadata);
-            ErrInfo.ErrorType(ErrorType::Client);
-            ErrInfo.Verbosity(Verbosity::Error);
-            ErrInfo.Title := 'Setup Required';
-            ErrInfo.Message := StrSubstNo('The %1 or %2 has not been defined. Please open the Extended Company Setup page and complete the required configuration before continuing.', ExtCompanySetup.FieldCaption("PMP15SORItemReclass.Jnl.Batch"), ExtCompanySetup.FieldCaption("PMP15SORItemReclass.Jnl.Tmpt."));
-            ErrInfo.AddAction('Open Ext. Company Setup', Codeunit::"PMP15 Sortation PO Mgmt", 'OpenExtCompanySetupPage');
-            Error(ErrInfo);
-            Clear(ErrInfo);
+        if (ExtCompanySetup."PMP15SORItemReclass.Jnl.Tmpt." = '') AND ((SORStep_Step = SORStep_Step::"1") OR ((SORStep_Step = SORStep_Step::"2")) OR (SORStep_Step = SORStep_Step::"3")) then begin
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15SORItemReclass.Jnl.Batch"));
         end;
 
-        if (ExtCompanySetup."PMP15 SOR Output Jnl. Batch" = '') OR (ExtCompanySetup."PMP15 SOR Output Jnl. Template" = '') AND (SORStep_Step = SORStep_Step::"4") then begin
-            ErrInfo.DataClassification(DataClassification::SystemMetadata);
-            ErrInfo.ErrorType(ErrorType::Client);
-            ErrInfo.Verbosity(Verbosity::Error);
-            ErrInfo.Title := 'Setup Required';
-            ErrInfo.Message := StrSubstNo('The %1 or %2 has not been defined. Please open the Extended Company Setup page and complete the required configuration before continuing.', ExtCompanySetup.FieldCaption("PMP15 SOR Output Jnl. Batch"), ExtCompanySetup.FieldCaption("PMP15 SOR Output Jnl. Template"));
-            ErrInfo.AddAction('Open Ext. Company Setup', Codeunit::"PMP15 Sortation PO Mgmt", 'OpenExtCompanySetupPage');
-            Error(ErrInfo);
-            Clear(ErrInfo);
-        end;
-
-        if (ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch" = '') OR (ExtCompanySetup."PMP15 SOR Consum.Jnl. Template" = '') AND (SORStep_Step = SORStep_Step::"4") then begin
-            ErrInfo.DataClassification(DataClassification::SystemMetadata);
-            ErrInfo.ErrorType(ErrorType::Client);
-            ErrInfo.Verbosity(Verbosity::Error);
-            ErrInfo.Title := 'Setup Required';
-            ErrInfo.Message := StrSubstNo('The %1 or %2 has not been defined. Please open the Extended Company Setup page and complete the required configuration before continuing.', ExtCompanySetup.FieldCaption("PMP15 SOR Consum.Jnl. Batch"), ExtCompanySetup.FieldCaption("PMP15 SOR Consum.Jnl. Template"));
-            ErrInfo.AddAction('Open Ext. Company Setup', Codeunit::"PMP15 Sortation PO Mgmt", 'OpenExtCompanySetupPage');
-            Error(ErrInfo);
-            Clear(ErrInfo);
+        if (SORStep_Step = SORStep_Step::"4") then begin
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Output Jnl. Template"));
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Output Jnl. Batch"));
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Consum.Jnl. Template"));
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Consum.Jnl. Batch"));
         end;
     end;
 }

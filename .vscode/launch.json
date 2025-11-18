@@ -10,7 +10,7 @@
             "serverInstance": "BC260",
             "port": 7049,
             "authentication": "UserPassword",
-            "startupObjectId": 60413,
+            "startupObjectId": 60423,
             "startupObjectType": "Page",
             "breakOnError": "All",
             "launchBrowser": true,

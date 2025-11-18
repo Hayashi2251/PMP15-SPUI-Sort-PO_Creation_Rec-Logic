@@ -1,5 +1,17 @@
 page 60413 "PMP15 Sort-Prod.Order List"
 {
+    // VERSION PMP15 
+
+    // VERSION
+    // Version List       Name
+    // ============================================================================================================
+    // PMP15              PMP SPUI - Sort-PO Creation & Recording (Logic)
+    // 
+    // PAGE
+    // Date        Developer  Version List  Trigger                     Description
+    // ============================================================================================================
+    // 2025/09/12  SW         PMP15                                     Create Page
+    // 
     ApplicationArea = All;
     Caption = 'Sortation Production Order List';
     PageType = List;
@@ -135,13 +147,17 @@ page 60413 "PMP15 Sort-Prod.Order List"
     var
         UoMCode: Code[10];
         ProdOrderLine: Record "Prod. Order Line";
-        // tempSORProdOrdRecord: Record "PMP15 Sortation PO Recording" temporary;
+        PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
+
+    protected var
+        SortProdOrdMgmt: Codeunit "PMP15 Sortation PO Mgmt";
 
     trigger OnOpenPage()
     var
         ExtCompanySetup: Record "PMP07 Extended Company Setup";
     begin
         ExtCompanySetup.Get();
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Item Owner Internal"));
         Rec.FilterGroup(2);
         Rec.SetRange("PMP04 Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
         Rec.SetRange("PMP15 Production Unit", Rec."PMP15 Production Unit"::"SOR-Sortation");

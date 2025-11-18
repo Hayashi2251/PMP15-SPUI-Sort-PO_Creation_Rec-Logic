@@ -16,5 +16,6 @@ permissionset 60401 PMP15SPUISortation
         page "PMP15 Sub Merk 5"=X,
         page "PMP15 Lot No by Bin Factbox"=X,
         page "PMP15 Sort-Prod. Order Subform"=X,
-        query "PMP15 SOR-Detail Result Pkg-No"=X;
+        query "PMP15 SOR-Detail Result Pkg-No"=X,
+        page "PMP15 SOR Inspection Packing"=X;
 }
