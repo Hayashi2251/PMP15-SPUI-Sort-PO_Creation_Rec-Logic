@@ -31,6 +31,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         ItemJnlLineReserve: Codeunit "Item Jnl. Line-Reserve";
         PkgNoInfoMgmt: Codeunit "Package Info. Management";
         PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
+        AssemblyPostMgmt: Codeunit "Assembly-Post";
         // 
         RefreshProdOrder: Report "Refresh Production Order";
         ConfirmationPage: Page "PMP02 Confirmation Page";
@@ -926,6 +927,12 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         TrackingSpecification: Record "Tracking Specification";
         TempTrackingSpecification: Record "Tracking Specification" temporary;
         CreateReserveMgmt: Codeunit "Create Reserv. Entry";
+        // 
+        TypeHelper: Codeunit "Type Helper";
+        SourceTrackingSpecification: Record "Tracking Specification";
+        ItemTrackingLine: Page "Item Tracking Lines";
+        RecRef: RecordRef;
+        ChangeType: Option Insert,Modify,FullDelete,PartDelete,ModifyAll;
     begin
         if AssemblyHeader.ReservEntryExist() then
             Error('Item tracking information already exists for this Assembly Order (%1). Please remove the existing tracking before proceeding.', AssemblyHeader."No.");
@@ -934,8 +941,9 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         if not Item.Get(AssemblyHeader."Item No.") then
             Error('The specified Item No. "%1" could not be found. Please verify that the item exists in the system.', AssemblyHeader."Item No.");
 
+        RecRef.GetTable(Item);
         if Item."Item Tracking Code" = '' then
-            Error('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', AssemblyHeader."Item No.");
+            PMPAppLogicMgmt.ErrorRecordRefwithAction(RecRef, Item.FieldNo(Description), Page::"Item Card", 'Empty Field', StrSubstNo('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', AssemblyHeader."Item No."));
 
         AssemblyHeaderReserve.InitFromAsmHeader(TempTrackingSpecification, AssemblyHeader);
         TempTrackingSpecification.Insert();
@@ -946,18 +954,34 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         TempGlobalEntrySummary.SetRange("Lot No.", SortProdOrderRec."Lot No.");
         TempGlobalEntrySummary.SetRange("Package No.", SortProdOrderRec."Package No.");
         if TempGlobalEntrySummary.FindSet() then begin
-            AssemblyHeaderReserve.InitFromAsmHeader(TempTrackingSpecification, AssemblyHeader);
-            TempTrackingSpecification.Validate("Bin Code", AssemblyHeader."Bin Code");
-            TempTrackingSpecification.Validate("Lot No.", TempGlobalEntrySummary."Lot No.");
-            TempTrackingSpecification.Validate("Package No.", TempGlobalEntrySummary."Package No.");
-            TempTrackingSpecification.Positive := true;
-            TempTrackingSpecification."Creation Date" := Today();
-            TempTrackingSpecification.Insert();
+            AssemblyHeaderReserve.InitFromAsmHeader(SourceTrackingSpecification, AssemblyHeader);
+            SourceTrackingSpecification."Bin Code" := AssemblyHeader."Bin Code";
+            ItemTrackingLine.SetSourceSpec(SourceTrackingSpecification, 0D);
 
-            CreateReservEntryFrom(RecReservEntry, TempTrackingSpecification);
-            RecReservEntry."Entry No." := NextReservEntryNo();
-            RecReservEntry."Reservation Status" := RecReservEntry."Reservation Status"::Surplus;
-            RecReservEntry.Insert();
+            TempTrackingSpecification.Init;
+            TempTrackingSpecification.TransferFields(SourceTrackingSpecification);
+            TempTrackingSpecification.SetItemData(SourceTrackingSpecification."Item No.", SourceTrackingSpecification.Description, SourceTrackingSpecification."Location Code", SourceTrackingSpecification."Variant Code", SourceTrackingSpecification."Bin Code", SourceTrackingSpecification."Qty. per Unit of Measure");
+            TempTrackingSpecification.Validate("Item No.", SourceTrackingSpecification."Item No.");
+            TempTrackingSpecification.Validate("Location Code", SourceTrackingSpecification."Location Code");
+            TempTrackingSpecification.Validate("Creation Date", DT2Date(TypeHelper.GetCurrentDateTimeInUserTimeZone()));
+            TempTrackingSpecification.Validate("Source Type", SourceTrackingSpecification."Source Type");
+            TempTrackingSpecification.Validate("Source Subtype", SourceTrackingSpecification."Source Subtype");
+            TempTrackingSpecification.Validate("Source ID", SourceTrackingSpecification."Source ID");
+            TempTrackingSpecification.Validate("Source Batch Name", SourceTrackingSpecification."Source Batch Name");
+            TempTrackingSpecification.Validate("Source Prod. Order Line", SourceTrackingSpecification."Source Prod. Order Line");
+            TempTrackingSpecification.Validate("Source Ref. No.", SourceTrackingSpecification."Source Ref. No.");
+
+            if TempGlobalEntrySummary."Serial No." <> '' then
+                TempTrackingSpecification.Validate("Serial No.", TempGlobalEntrySummary."Serial No.");
+            if TempGlobalEntrySummary."Lot No." <> '' then
+                TempTrackingSpecification.Validate("Lot No.", TempGlobalEntrySummary."Lot No.");
+            if TempGlobalEntrySummary."Package No." <> '' then
+                TempTrackingSpecification.Validate("Package No.", TempGlobalEntrySummary."Package No.");
+
+            TempTrackingSpecification.Validate("Quantity (Base)", AssemblyHeader."Quantity (Base)");
+            TempTrackingSpecification.Validate("Qty. to Handle (Base)", AssemblyHeader."Quantity (Base)");
+            TempTrackingSpecification.Validate("Qty. to Invoice (Base)", AssemblyHeader."Quantity (Base)");
+            ItemTrackingLine.RegisterChange(TempTrackingSpecification, TempTrackingSpecification, ChangeType::Insert, false);
         end;
     end;
 
@@ -976,6 +1000,8 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         TrackingSpecification: Record "Tracking Specification";
         TempTrackingSpecification: Record "Tracking Specification" temporary;
         PackageNoInfo: Record "Package No. Information";
+        // 
+        RecRef: RecordRef;
     begin
         if AssemblyLine.ReservEntryExist() then
             Error('Item tracking information already exists for this Assembly Line (Line No. %1, Doc. No. %2). Please remove the existing tracking before proceeding.', AssemblyLine."Line No.", AssemblyLine."Document No.");
@@ -984,8 +1010,9 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         if not Item.Get(AssemblyLine."No.") then
             Error('The specified Item No. "%1" could not be found. Please verify that the item exists in the system.', AssemblyLine."No.");
 
+        RecRef.GetTable(Item);
         if Item."Item Tracking Code" = '' then
-            Error('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', AssemblyLine."No.");
+            PMPAppLogicMgmt.ErrorRecordRefwithAction(RecRef, Item.FieldNo(Description), Page::"Item Card", 'Empty Field', StrSubstNo('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', Item."No."));
 
         if AssemblyLineReserve.ReservEntryExist(AssemblyLine) then
             Error(
@@ -1004,7 +1031,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             PackageNoInfo.SetAutoCalcFields();
             PackageNoInfo.SetRange("Item No.", AssemblyLine."No.");
             PackageNoInfo.SetFilter("Variant Code", AssemblyLine."Variant Code");
-            PackageNoInfo.SetFilter("PMP04 Bin Code", AssemblyLine."Bin Code");
+            // PackageNoInfo.SetFilter("PMP04 Bin Code", AssemblyLine."Bin Code");
             PackageNoInfo.SetRange(Inventory, 0);
             if PackageNoInfo.FindFirst() then
                 InsertReservEntryRecfromTempTrackSpecASMLINE(AssemblyLine, SortProdOrderRec, RecReservEntry, TempTrackingSpecification, PackageNoInfo."PMP04 Lot No.", PackageNoInfo."Package No.");
@@ -1012,22 +1039,53 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     end;
 
     local procedure InsertReservEntryRecfromTempTrackSpecASMLINE(var AssemblyLine: Record "Assembly Line"; SortProdOrderRec: Record "PMP15 Sortation PO Recording"; var RecReservEntry: Record "Reservation Entry"; TempTrackingSpecification: Record "Tracking Specification" temporary; LotNo: Code[50]; PackageNo: Code[50])
+    var
+        TypeHelper: Codeunit "Type Helper";
+        SourceTrackingSpecification: Record "Tracking Specification";
+        ItemTrackingLine: Page "Item Tracking Lines";
+        RecRef: RecordRef;
+        ChangeType: Option Insert,Modify,FullDelete,PartDelete,ModifyAll;
     begin
-        AssemblyLineReserve.InitFromAsmLine(TempTrackingSpecification, AssemblyLine);
+        AssemblyLineReserve.InitFromAsmLine(SourceTrackingSpecification, AssemblyLine);
+        ItemTrackingLine.SetSourceSpec(SourceTrackingSpecification, 0D);
 
-        TempTrackingSpecification."Lot No." := SortProdOrderRec."Lot No.";
-        TempTrackingSpecification."Entry No." := NextTrackingSpecEntryNo;
-        TempTrackingSpecification.Validate("Bin Code", AssemblyLine."Bin Code");
-        TempTrackingSpecification.Validate("Lot No.", LotNo);
-        TempTrackingSpecification.Validate("Package No.", PackageNo);
-        TempTrackingSpecification.Positive := true;
-        TempTrackingSpecification."Creation Date" := Today();
-        TempTrackingSpecification.Insert();
+        TempTrackingSpecification.Init;
+        TempTrackingSpecification.TransferFields(SourceTrackingSpecification);
+        TempTrackingSpecification.SetItemData(SourceTrackingSpecification."Item No.", SourceTrackingSpecification.Description, SourceTrackingSpecification."Location Code", SourceTrackingSpecification."Variant Code", SourceTrackingSpecification."Bin Code", SourceTrackingSpecification."Qty. per Unit of Measure");
+        TempTrackingSpecification.Validate("Item No.", SourceTrackingSpecification."Item No.");
+        TempTrackingSpecification.Validate("Location Code", SourceTrackingSpecification."Location Code");
+        // TempTrackingSpecification.Validate("Creation Date", Today);
+        TempTrackingSpecification.Validate("Creation Date", DT2Date(TypeHelper.GetCurrentDateTimeInUserTimeZone()));
+        TempTrackingSpecification.Validate("Source Type", SourceTrackingSpecification."Source Type");
+        TempTrackingSpecification.Validate("Source Subtype", SourceTrackingSpecification."Source Subtype");
+        TempTrackingSpecification.Validate("Source ID", SourceTrackingSpecification."Source ID");
+        TempTrackingSpecification.Validate("Source Batch Name", SourceTrackingSpecification."Source Batch Name");
+        TempTrackingSpecification.Validate("Source Prod. Order Line", SourceTrackingSpecification."Source Prod. Order Line");
+        TempTrackingSpecification.Validate("Source Ref. No.", SourceTrackingSpecification."Source Ref. No.");
 
-        CreateReservEntryFrom(RecReservEntry, TempTrackingSpecification);
-        RecReservEntry."Entry No." := NextReservEntryNo();
-        RecReservEntry."Reservation Status" := RecReservEntry."Reservation Status"::Surplus;
-        RecReservEntry.Insert();
+        if LotNo <> '' then
+            TempTrackingSpecification.Validate("Lot No.", LotNo);
+        if PackageNo <> '' then
+            TempTrackingSpecification.Validate("Package No.", PackageNo);
+
+        TempTrackingSpecification.Validate("Quantity (Base)", AssemblyLine."Quantity (Base)");
+        TempTrackingSpecification.Validate("Qty. to Handle (Base)", AssemblyLine."Quantity (Base)");
+        TempTrackingSpecification.Validate("Qty. to Invoice (Base)", AssemblyLine."Quantity (Base)");
+        ItemTrackingLine.RegisterChange(TempTrackingSpecification, TempTrackingSpecification, ChangeType::Insert, false);
+        // AssemblyLineReserve.InitFromAsmLine(TempTrackingSpecification, AssemblyLine);
+        // TempTrackingSpecification."Lot No." := SortProdOrderRec."Lot No.";
+        // TempTrackingSpecification."Entry No." := NextTrackingSpecEntryNo;
+        // TempTrackingSpecification.Validate("Bin Code", AssemblyLine."Bin Code");
+        // TempTrackingSpecification.Validate("Lot No.", LotNo);
+        // TempTrackingSpecification.Validate("Package No.", PackageNo);
+        // TempTrackingSpecification.Positive := true;
+        // TempTrackingSpecification."Creation Date" := Today();
+        // TempTrackingSpecification.Insert();
+
+        // CreateReservEntryFrom(RecReservEntry, TempTrackingSpecification);
+        // RecReservEntry."Entry No." := NextReservEntryNo();
+        // RecReservEntry."Reservation Status" := RecReservEntry."Reservation Status"::Surplus;
+        // RecReservEntry.Insert();
     end;
 
     // ASSEMBLY LINE (SUBFORM) FROM THE DOCUMENT (ITERATING)
@@ -1196,6 +1254,14 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     tempItemJnlLine.Validate("Order Type", tempItemJnlLine."Order Type"::Production);
                     tempItemJnlLine.Validate("Order No.", SortProdOrderRec."Sortation Prod. Order No.");
 
+                    ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                    ProdOrdComp.SetRange("PMP15 Unsorted Item", true);
+                    if ProdOrdComp.FindFirst() then begin
+                        tempItemJnlLine.Validate("Item No.", ProdOrdComp."Item No.");
+                        tempItemJnlLine.Validate("Variant Code", ProdOrdComp."Variant Code");
+                        tempItemJnlLine.Validate("Prod. Order Comp. Line No.", ProdOrdComp."Line No.");
+                    end;
+
                     ProdOrdLine.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
                     ProdOrdLine.SetRange("Item No.", Item."No.");
                     ProdOrdLine.SetFilter("Variant Code", SortProdOrderRec."Sorted Variant Code");
@@ -1204,13 +1270,6 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         tempItemJnlLine.Validate("Location Code", ProdOrdLine."Location Code");
                     end;
 
-                    ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                    ProdOrdComp.SetRange("PMP15 Unsorted Item", true);
-                    if ProdOrdComp.FindFirst() then begin
-                        tempItemJnlLine.Validate("Item No.", ProdOrdComp."Item No.");
-                        tempItemJnlLine.Validate("Variant Code", ProdOrdComp."Variant Code");
-                        tempItemJnlLine.Validate("Prod. Order Comp. Line No.", ProdOrdComp."Line No.");
-                    end;
                     tempItemJnlLine.Validate(Quantity, SortProdOrderRec.Quantity);
                     tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
                     tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
@@ -1592,18 +1651,47 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     // Creates and inserts a Reservation Entry from temporary tracking and journal line data based on sortation and tracking specifications.
     local procedure InsertReservEntryRecfromTempTrackSpecIJL(var RecReservEntry: Record "Reservation Entry"; var TempTrackingSpecification: Record "Tracking Specification" temporary; var RecItemJnlLine: Record "Item Journal Line"; SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary; SerLotPkgArr: array[3] of Code[50])
     var
-        ItemTrackingSetup: Record "Item Tracking Setup";
+        TypeHelper: Codeunit "Type Helper";
+        SourceTrackingSpecification: Record "Tracking Specification";
+        Item: Record Item;
+        ItemTrackingLine: Page "Item Tracking Lines";
+        RecRef: RecordRef;
+        RunMode: Enum "Item Tracking Run Mode";
+        ChangeType: Option Insert,Modify,FullDelete,PartDelete,ModifyAll;
     begin
-        ItemTrackingSetup.CopyTrackingFromItemJnlLine(RecItemJnlLine);
-        ItemJnlLineReserve.InitFromItemJnlLine(TempTrackingSpecification, RecItemJnlLine);
-        TempTrackingSpecification.CopyTrackingFromItemTrackingSetup(ItemTrackingSetup);
-        TempTrackingSpecification."Entry No." := NextTrackingSpecEntryNo;
-        if (SortProdOrderRec."SORStep Step" = SortProdOrderRec."SORStep Step"::"1") AND (SortProdOrderRec."SORStep Step" = SortProdOrderRec."SORStep Step"::"2") AND (SortProdOrderRec."SORStep Step" = SortProdOrderRec."SORStep Step"::"3") then begin
+        Item.Get(RecItemJnlLine."Item No.");
+        RecRef.GetTable(Item);
+        if Item."Item Tracking Code" = '' then
+            PMPAppLogicMgmt.ErrorRecordRefwithAction(RecRef, Item.FieldNo(Description), Page::"Item Card", 'Empty Field', StrSubstNo('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', Item."No."));
+
+        ItemJnlLineReserve.InitFromItemJnlLine(SourceTrackingSpecification, RecItemJnlLine);
+        ItemTrackingLine.SetSourceSpec(SourceTrackingSpecification, 0D);
+        if RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Transfer then begin
+            ItemTrackingLine.SetRunMode(RunMode::Reclass);
+        end;
+
+        TempTrackingSpecification.Init;
+        TempTrackingSpecification.TransferFields(SourceTrackingSpecification);
+        TempTrackingSpecification.SetItemData(SourceTrackingSpecification."Item No.", SourceTrackingSpecification.Description, SourceTrackingSpecification."Location Code", SourceTrackingSpecification."Variant Code", SourceTrackingSpecification."Bin Code", SourceTrackingSpecification."Qty. per Unit of Measure");
+        TempTrackingSpecification.Validate("Item No.", SourceTrackingSpecification."Item No.");
+        TempTrackingSpecification.Validate("Location Code", SourceTrackingSpecification."Location Code");
+        // TempTrackingSpecification.Validate("Creation Date", Today);
+        TempTrackingSpecification.Validate("Creation Date", DT2Date(TypeHelper.GetCurrentDateTimeInUserTimeZone()));
+        TempTrackingSpecification.Validate("Source Type", SourceTrackingSpecification."Source Type");
+        TempTrackingSpecification.Validate("Source Subtype", SourceTrackingSpecification."Source Subtype");
+        TempTrackingSpecification.Validate("Source ID", SourceTrackingSpecification."Source ID");
+        TempTrackingSpecification.Validate("Source Batch Name", SourceTrackingSpecification."Source Batch Name");
+        TempTrackingSpecification.Validate("Source Prod. Order Line", SourceTrackingSpecification."Source Prod. Order Line");
+        TempTrackingSpecification.Validate("Source Ref. No.", SourceTrackingSpecification."Source Ref. No.");
+        if SortProdOrderRec."SORStep Step" in [SortProdOrderRec."SORStep Step"::"1", SortProdOrderRec."SORStep Step"::"2", SortProdOrderRec."SORStep Step"::"3"] then begin
             TempTrackingSpecification.Validate("Bin Code", RecItemJnlLine."Bin Code");
             TempTrackingSpecification.Validate("Lot No.", RecItemJnlLine."Lot No.");
-            TempTrackingSpecification.Validate("Serial No.", SerLotPkgArr[1]);
-            TempTrackingSpecification.Validate("New Lot No.", SerLotPkgArr[2]);
-            TempTrackingSpecification.Validate("Package No.", SerLotPkgArr[3]);
+            if SerLotPkgArr[1] <> '' then
+                TempTrackingSpecification.Validate("Serial No.", SerLotPkgArr[1]);
+            if SerLotPkgArr[2] <> '' then
+                TempTrackingSpecification.Validate("New Lot No.", SerLotPkgArr[2]);
+            if SerLotPkgArr[3] <> '' then
+                TempTrackingSpecification.Validate("Package No.", SerLotPkgArr[3]);
             TempTrackingSpecification.Positive := true;
         end else if (RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Output) then begin
             TempTrackingSpecification.Positive := true;
@@ -1618,29 +1706,10 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             TempTrackingSpecification.Validate("Package No.", SerLotPkgArr[3]);
             TempTrackingSpecification.Positive := true;
         end;
-        TempTrackingSpecification."Expiration Date" := RecItemJnlLine."Expiration Date";
-        TempTrackingSpecification."Warranty Date" := RecItemJnlLine."Warranty Date";
-        TempTrackingSpecification."Creation Date" := Today();
-        TempTrackingSpecification.Insert();
-
-        CreateReservEntryFrom(RecReservEntry, TempTrackingSpecification);
-        RecReservEntry."Entry No." := NextReservEntryNo;
-
-        if (RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Transfer) then begin
-            RecReservEntry.Positive := true;
-            RecReservEntry.Validate("Quantity (Base)", RecReservEntry."Quantity (Base)" * -1);
-            RecReservEntry."Reservation Status" := RecReservEntry."Reservation Status"::Prospect;
-            RecReservEntry."New Lot No." := SortProdOrderRec."Lot No.";
-        end else if (RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Output) then begin
-            RecReservEntry.Positive := false;
-            RecReservEntry."Reservation Status" := RecReservEntry."Reservation Status"::Prospect;
-        end else if (RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Consumption) then begin
-            RecReservEntry.Validate("Quantity (Base)", RecReservEntry."Quantity (Base)" * -1);
-            RecReservEntry.Positive := false;
-            RecReservEntry."Reservation Status" := RecReservEntry."Reservation Status"::Prospect;
-        end;
-
-        RecReservEntry.Insert();
+        TempTrackingSpecification.Validate("Quantity (Base)", RecItemJnlLine."Quantity (Base)");
+        TempTrackingSpecification.Validate("Qty. to Handle (Base)", RecItemJnlLine."Quantity (Base)");
+        TempTrackingSpecification.Validate("Qty. to Invoice (Base)", RecItemJnlLine."Quantity (Base)");
+        ItemTrackingLine.RegisterChange(TempTrackingSpecification, TempTrackingSpecification, ChangeType::Insert, false);
     end;
 
     // ONE OF THE MOST IMPORTANT FUNCTION IN THIS CODEUNIT
@@ -1690,7 +1759,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             PackageNoInfo.SetAutoCalcFields();
             PackageNoInfo.SetRange("Item No.", RecItemJnlLine."Item No.");
             PackageNoInfo.SetFilter("Variant Code", RecItemJnlLine."Variant Code");
-            PackageNoInfo.SetFilter("PMP04 Bin Code", RecItemJnlLine."Bin Code");
+            // PackageNoInfo.SetFilter("PMP04 Bin Code", RecItemJnlLine."Bin Code");
             PackageNoInfo.SetRange(Inventory, 0);
             if PackageNoInfo.FindFirst() then begin
                 SerLotPkgArr[1] := PackageNoInfo."PMP04 Bin Code";
@@ -1736,7 +1805,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         RecReservEntry."Creation Date" := Today();
     end;
 
-    // Determines and assigns the appropriate item tracking type to the reservation entry based on the presence of lot, serial, and package numbers.
+    // // Determines and assigns the appropriate item tracking type to the reservation entry based on the presence of lot, serial, and package numbers.
     local procedure GetRecReservEntryItemTrackingEnum(var RecReservEntry: Record "Reservation Entry"; LotNo: Code[50]; SerialNo: Code[50]; PackageNo: Code[50])
     var
         myInt: Integer;
@@ -2210,15 +2279,14 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     GetProdOrderCropfromPkgNoInfo(ProdOrder, SortProdOrderRec."Package No.");
                     CreateAssemblyHeadfromSORRecording(AssemblyHeader, ProdOrder, SortProdOrderRec, SORStep_Step);
                     if not IsASOFoundExisting(AssemblyHeader) then begin
-                        // CreateAssemblyLinefromSORRecording(AssemblyLine, AssemblyHeader, ProdOrder, SortProdOrderRec);
                         CreateAssemblyLinefromSORRecording(AssemblyLine, AssemblyHeader, ProdOrder, SortProdOrderRec);
 
                         GenerateItemReservEntryAssemblyHeader(AssemblyHeader, ProdOrder, SortProdOrderRec);
                         GenerateItemTrackingAssemblyLine(AssemblyHeader, ProdOrder, SortProdOrderRec);
-                        // Commit();
+                        // Commit(); //
                     end;
 
-                    if CODEUNIT.Run(CODEUNIT::"Assembly-Post", AssemblyHeader) then
+                    if AssemblyPostMgmt.Run(AssemblyHeader) then
                         Message('The sortation production order posting in the %1-Step for Assembly Item %2  is successfully posted.', SORStep_Step, SortProdOrderRec."Unsorted Item No.")
                     else
                         Message('The sortation production order posting in the %1-Step for Assembly Item %2  is failed to posting.', SORStep_Step, SortProdOrderRec."Unsorted Item No.");
@@ -2233,7 +2301,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     if IsSuccessInsertItemJnlLine then begin
                         InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
                         GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
-                        // Commit();
+                        // Commit(); //
                     end;
                     PostItemReclassJnlSOR(ItemJnlLine, SortProdOrderRec);
                 end;
@@ -2242,7 +2310,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     case SortProdOrderRec."Tobacco Type" of
                         SortProdOrderRec."Tobacco Type"::Wrapper:
                             begin
-                                // // OUTPUT JOURNAL
+                                // OUTPUT JOURNAL
                                 ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
                                 ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
                                 if ItemJnlLine.FindLast() OR (ItemJnlLine.Count = 0) then begin // As Validation before insertion
@@ -2252,6 +2320,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                                     ItemJnlLine.Reset();
                                     InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
                                     GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
+                                    // Commit(); //
                                     ItemJnlLine2 := ItemJnlLine;
                                     ItemJnlLine.PostingItemJnlFromProduction(false);
                                     Commit();
@@ -2273,6 +2342,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                                     ItemJnlLine2.Reset();
                                     InsertItemJnlLinefromTemp(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
                                     GenerateRecReserveEntryItemJnlLine(ItemJnlLine2, SortProdOrderRec);
+                                    // Commit(); //
                                     ItemJnlLine2.PostingItemJnlFromProduction(false);
                                     Message('The sortation production order posting in the %1-th Step for %2 Tobacco Type is successfully posted.', SORStep_Step, SortProdOrderRec."Tobacco Type");
                                 end else
@@ -2530,20 +2600,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         end;
     end;
 
-    // Automatically sets the Location Code on a new Sortation Inspection Package Line using Extended Company Setup.
-    [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Inspection Pkg. Line", OnAfterInsertEvent, '', false, false)]
-    local procedure MyProcedure(var Rec: Record "PMP15 SOR Inspection Pkg. Line"; RunTrigger: Boolean)
-    var
-        ExtComSetup: Record "PMP07 Extended Company Setup";
-    begin
-        if Rec."Location Code" = '' then begin
-            ExtComSetup.Get();
-            Rec."Location Code" := ExtComSetup."PMP15 SOR Location Code";
-        end;
-        Rec.Modify();
-    end;
-
-    // Automatically assigns the New Item Code on a new Sortation Inspection Package Line based on the related Inspection Header and Item Category.
+    // Automatically assigns the New Item Code & Location Code on a new Sortation Inspection Package Line based on the related Inspection Header.
     [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Inspection Pkg. Line", OnAfterInsertEvent, '', false, false)]
     local procedure PMP15SetValAfterInsert_OnAfterInsertEvent(var Rec: Record "PMP15 SOR Inspection Pkg. Line"; RunTrigger: Boolean)
     var
@@ -2555,13 +2612,21 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         Rec.Validate(Result);
         SORInspectHeadr.SetRange("No.", Rec."Document No.");
         if SORInspectHeadr.FindFirst() then begin
-            if Item.Get(SORInspectHeadr."Sorted Item No.") then begin
+            if Rec."New Item Code" = '' then begin
+                if not Item.Get(SORInspectHeadr."Sorted Item No.") then
+                    Error('The Sorted Item No. (%1) in the Sortation Inspection Packing List Header is not found in the existing Item data.', SORInspectHeadr."Sorted Item No.");
                 Item2.SetRange("Item Category Code", Item."Item Category Code");
                 if Item2.FindFirst() then begin
                     Rec."New Item Code" := Item2."No.";
                 end;
             end;
         end;
+
+        if Rec."Location Code" = '' then begin
+            ExtCompanySetup.Get();
+            Rec."Location Code" := ExtCompanySetup."PMP15 SOR Location Code";
+        end;
+        Rec.Modify();
     end;
 
     // Sets the appropriate destination Bin Code based on the inspection Result value.
@@ -2589,6 +2654,29 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 end;
         // else
         // Error('There is no Result enum option with the value of "%1"', Rec.Result);
+        end;
+    end;
+
+    [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Inspection Pkg. Line", OnBeforeDeleteEvent, '', false, false)]
+    local procedure PMP15ValidateBeforeDeletion_OnBeforeDeleteEvent(var Rec: Record "PMP15 SOR Inspection Pkg. Line"; RunTrigger: Boolean)
+    var
+        PackageNoInfor: Record "Package No. Information";
+        SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr";
+    begin
+        SORInspectHeadr.Reset();
+        PackageNoInfor.Reset();
+        SORInspectHeadr.SetRange("No.", Rec."Document No.");
+        if SORInspectHeadr.FindFirst() then begin
+            PackageNoInfor.SetRange("PMP15 SOR Inspection Pckg. No.", Rec."Document No.");
+            PackageNoInfor.SetRange("Package No.", Rec."Package No.");
+            PackageNoInfor.SetRange("Item No.", Rec."New Item Code");
+            PackageNoInfor.SetRange("Variant Code", SORInspectHeadr."Sorted Variant Code");
+            PackageNoInfor.SetFilter("PMP04 Lot No.", Rec."Lot No.");
+            // PackageNoInfor.SetRange("PMP15 Able to Sell", true);
+            if PackageNoInfor.FindFirst() then begin
+                Clear(PackageNoInfor."PMP15 SOR Inspection Pckg. No.");
+                PackageNoInfor.Modify();
+            end;
         end;
     end;
 
@@ -2623,8 +2711,8 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         PackageNoInfor.SetRange("Item No.", SORInspectHeadr."Sorted Item No.");
         PackageNoInfor.SetRange("Variant Code", SORInspectHeadr."Sorted Variant Code");
         PackageNoInfor.SetFilter("PMP04 Lot No.", SORInspectHeadr."Lot No.");
-        // PackageNoInfor.SetRange("PMP15 Able to Sell", true);
-        // PackageNoInfor.SetFilter("PMP15 SOR Inspection Pckg. No.", '%1', '');
+        PackageNoInfor.SetRange("PMP15 Able to Sell", true);
+        PackageNoInfor.SetFilter("PMP15 SOR Inspection Pckg. No.", '%1', '');
         PackageNoInfor.CalcFields(Inventory);
         PackageNoInfor.SetFilter(Inventory, '> 0');
 
@@ -2665,7 +2753,8 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 ItemVariantRec.SetRange("Item No.", Item."No.");
                 if ItemVariantRec.FindFirst() then
                     SORInspectPkgLine.Standard := ItemVariantRec.Code;
-            end;
+            end else
+                Error('The Item is not found for the Package No Information you choose.');
 
             SORInspectPkgLine."New Sub Merk 1" := SORInspectPkgLine."Sub Merk 1";
             SORInspectPkgLine."New Sub Merk 2" := SORInspectPkgLine."Sub Merk 2";
@@ -2695,7 +2784,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 Error('When releasing the document, Sortation Inspection Packing List Line cannot be empty.');
             end;
             SORInspectHeadr."Document Status" := SORInspectHeadr."Document Status"::Released;
-            SORInspectHeadr.Modify();
+            // SORInspectHeadr.Modify();
         end;
     end;
 
@@ -2714,7 +2803,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
 
         if CanBeOpen then begin
             SORInspectHeadr."Document Status" := SORInspectHeadr."Document Status"::Open;
-            SORInspectHeadr.Modify();
+            // SORInspectHeadr.Modify();
         end;
     end;
 
@@ -3162,8 +3251,6 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             Error('Reservation entries already exist for Item "%1" in this reclassification journal line. Please cancel or delete the existing reservations before performing this action.', RecItemJnlLine."Item No.");
 
         ItemTrackingCode.Get(Item."Item Tracking Code");
-        ItemJnlLineReserve.InitFromItemJnlLine(TempTrackingSpecification, RecItemJnlLine);
-        TempTrackingSpecification.Insert();
 
         if RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Output then begin
             SerLotPkgArr[1] := '';
@@ -3174,6 +3261,8 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
 
             InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, SerLotPkgArr);
         end else if RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Consumption then begin
+            ItemJnlLineReserve.InitFromItemJnlLine(TempTrackingSpecification, RecItemJnlLine);
+            TempTrackingSpecification.Insert();
             RetrieveLookupData(TempTrackingSpecification, true);
             TempTrackingSpecification.Delete();
             TempGlobalEntrySummary.Reset();
@@ -3188,7 +3277,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 PackageNoInfo.SetAutoCalcFields();
                 PackageNoInfo.SetRange("Item No.", RecItemJnlLine."Item No.");
                 PackageNoInfo.SetFilter("Variant Code", RecItemJnlLine."Variant Code");
-                PackageNoInfo.SetFilter("PMP04 Bin Code", RecItemJnlLine."Bin Code");
+                // PackageNoInfo.SetFilter("PMP04 Bin Code", RecItemJnlLine."Bin Code");
                 PackageNoInfo.SetRange(Inventory, 0);
                 if PackageNoInfo.FindFirst() then begin
                     SerLotPkgArr[1] := '';
@@ -3202,35 +3291,45 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
 
     local procedure InsertReservEntryRecfromTempTrackSpecIJL(var RecReservEntry: Record "Reservation Entry"; var TempTrackingSpecification: Record "Tracking Specification" temporary; var RecItemJnlLine: Record "Item Journal Line"; SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line"; SerLotPkgArr: array[3] of Code[50])
     var
-        ItemTrackingSetup: Record "Item Tracking Setup";
+        SourceTrackingSpecification: Record "Tracking Specification";
+        ChangeType: Option Insert,Modify,FullDelete,PartDelete,ModifyAll;
+        ItemTrackingLine: Page "Item Tracking Lines";
+        TypeHelper: Codeunit "Type Helper";
+        Item: Record Item;
+        RecRef: RecordRef;
     begin
-        ItemTrackingSetup.CopyTrackingFromItemJnlLine(RecItemJnlLine);
-        ItemJnlLineReserve.InitFromItemJnlLine(TempTrackingSpecification, RecItemJnlLine);
-        TempTrackingSpecification.CopyTrackingFromItemTrackingSetup(ItemTrackingSetup);
-        TempTrackingSpecification."Entry No." := NextTrackingSpecEntryNo;
-        TempTrackingSpecification.Validate("Bin Code", RecItemJnlLine."Bin Code");
-        TempTrackingSpecification.Validate("Serial No.", SerLotPkgArr[1]);
-        TempTrackingSpecification.Validate("Lot No.", SerLotPkgArr[2]);
-        TempTrackingSpecification.Validate("Package No.", SerLotPkgArr[3]);
-        TempTrackingSpecification.Positive := true;
-        TempTrackingSpecification."Expiration Date" := RecItemJnlLine."Expiration Date";
-        TempTrackingSpecification."Warranty Date" := RecItemJnlLine."Warranty Date";
-        TempTrackingSpecification."Creation Date" := Today();
-        TempTrackingSpecification.Insert();
+        Item.Get(RecItemJnlLine."Item No.");
+        RecRef.GetTable(Item);
+        if Item."Item Tracking Code" = '' then
+            PMPAppLogicMgmt.ErrorRecordRefwithAction(RecRef, Item.FieldNo(Description), Page::"Item Card", 'Empty Field', StrSubstNo('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', Item."No."));
 
-        CreateReservEntryFrom(RecReservEntry, TempTrackingSpecification);
-        RecReservEntry."Entry No." := NextReservEntryNo;
+        ItemJnlLineReserve.InitFromItemJnlLine(SourceTrackingSpecification, RecItemJnlLine);
+        ItemTrackingLine.SetSourceSpec(SourceTrackingSpecification, 0D);
 
-        if (RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Output) then begin
-            RecReservEntry.Positive := false;
-            RecReservEntry."Reservation Status" := RecReservEntry."Reservation Status"::Prospect;
-        end else if (RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Consumption) then begin
-            RecReservEntry.Validate("Quantity (Base)", RecReservEntry."Quantity (Base)" * -1);
-            RecReservEntry.Positive := false;
-            RecReservEntry."Reservation Status" := RecReservEntry."Reservation Status"::Prospect;
-        end;
+        TempTrackingSpecification.Init;
+        TempTrackingSpecification.TransferFields(SourceTrackingSpecification);
+        TempTrackingSpecification.SetItemData(SourceTrackingSpecification."Item No.", SourceTrackingSpecification.Description, SourceTrackingSpecification."Location Code", SourceTrackingSpecification."Variant Code", SourceTrackingSpecification."Bin Code", SourceTrackingSpecification."Qty. per Unit of Measure");
+        TempTrackingSpecification.Validate("Item No.", SourceTrackingSpecification."Item No.");
+        TempTrackingSpecification.Validate("Location Code", SourceTrackingSpecification."Location Code");
+        TempTrackingSpecification.Validate("Creation Date", DT2Date(TypeHelper.GetCurrentDateTimeInUserTimeZone()));
+        TempTrackingSpecification.Validate("Source Type", SourceTrackingSpecification."Source Type");
+        TempTrackingSpecification.Validate("Source Subtype", SourceTrackingSpecification."Source Subtype");
+        TempTrackingSpecification.Validate("Source ID", SourceTrackingSpecification."Source ID");
+        TempTrackingSpecification.Validate("Source Batch Name", SourceTrackingSpecification."Source Batch Name");
+        TempTrackingSpecification.Validate("Source Prod. Order Line", SourceTrackingSpecification."Source Prod. Order Line");
+        TempTrackingSpecification.Validate("Source Ref. No.", SourceTrackingSpecification."Source Ref. No.");
 
-        RecReservEntry.Insert();
+        if SerLotPkgArr[1] <> '' then
+            TempTrackingSpecification.Validate("Serial No.", SerLotPkgArr[1]);
+        if SerLotPkgArr[2] <> '' then
+            TempTrackingSpecification.Validate("Lot No.", SerLotPkgArr[2]);
+        if SerLotPkgArr[3] <> '' then
+            TempTrackingSpecification.Validate("Package No.", SerLotPkgArr[3]);
+
+        TempTrackingSpecification.Validate("Quantity (Base)", RecItemJnlLine."Quantity (Base)");
+        TempTrackingSpecification.Validate("Qty. to Handle (Base)", RecItemJnlLine."Quantity (Base)");
+        TempTrackingSpecification.Validate("Qty. to Invoice (Base)", RecItemJnlLine."Quantity (Base)");
+        ItemTrackingLine.RegisterChange(TempTrackingSpecification, TempTrackingSpecification, ChangeType::Insert, false);
     end;
 
     #endregion SOR INSPECTION PACKING LIST
