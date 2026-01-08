@@ -1,17 +1,17 @@
 query 60408 "PMP15 SOR-Detail Result Pkg-No"
 {
     // version PMP15 
-    
+
     // List Modification
     // Version List       Name
     // =============================================================================================================
     // PMP15              PMP SPUI - Sort-PO Creation & Recording (Logic)
-    
+
     // QUERY
     // Date        Developer  Version List  Description
     // =============================================================================================================
     // 2025/10/31  SW         PMP15         Create Query
-    
+
     Caption = 'PMP15 SOR-Detail Result Pkg-No';
     QueryType = Normal;
 
@@ -42,20 +42,24 @@ query 60408 "PMP15 SOR-Detail Result Pkg-No"
                 column(SDR_UnitofMeasureCode; "Unit of Measure Code") { Caption = 'SDR UoM'; }
                 column(SDR_Rework; Rework) { Caption = 'SDR Rework'; }
                 column(SDR_TobaccoType; "Tobacco Type") { Caption = 'SDR Tbco. Type'; }
-                dataitem(Sub_Merk_2; "PMP15 Sub Merk 2")
-                {
-                    DataItemLink = "Code" = PMP15_Sortation_Detail_Quality."Sub Merk 2";
-                    column(SM2_Description; Description) { Caption = 'SM2 Desc.'; }
-                    column(SM2_Group; Group) { Caption = 'SM2 Group'; }
-                    column(SM2_Ranking; Ranking) { Caption = 'SM2 Rank'; }
-                    dataitem(Sub_Merk_3; "PMP15 Sub Merk 3")
-                    {
-                        DataItemLink = "Code" = PMP15_Sortation_Detail_Quality."Sub Merk 3";
-                        column(SM3_Description; Description) { Caption = 'SM3 Desc.'; }
-                        column(SM3_Group; Group) { Caption = 'SM3 Group'; }
-                        column(SM3_Ranking; Ranking) { Caption = 'SM3 Rank'; }
-                    }
-                }
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                #region REMOVED
+                // dataitem(Sub_Merk_2; "PMP15 Sub Merk 2")
+                // {
+                //     DataItemLink = "Code" = PMP15_Sortation_Detail_Quality."Sub Merk 2";
+                //     column(SM2_Description; Description) { Caption = 'SM2 Desc.'; }
+                //     column(SM2_Group; Group) { Caption = 'SM2 Group'; }
+                //     column(SM2_Ranking; Ranking) { Caption = 'SM2 Rank'; }
+                //     dataitem(Sub_Merk_3; "PMP15 Sub Merk 3")
+                //     {
+                //         DataItemLink = "Code" = PMP15_Sortation_Detail_Quality."Sub Merk 3";
+                //         column(SM3_Description; Description) { Caption = 'SM3 Desc.'; }
+                //         column(SM3_Group; Group) { Caption = 'SM3 Group'; }
+                //         column(SM3_Ranking; Ranking) { Caption = 'SM3 Rank'; }
+                //     }
+                // }
+                #endregion REMOVED
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
             }
         }
     }

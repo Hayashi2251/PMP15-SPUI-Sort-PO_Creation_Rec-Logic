@@ -2,7 +2,7 @@
   "id": "ebad0c1f-85fb-43c2-80da-4e9148b6512b",
   "name": "PMP SPUI - Sort-PO Creation & Recording (Logic)",
   "publisher": "PT SME Solution",
-  "version": "1.0.2600.2",
+  "version": "1.0.2700.1",
   "brief": "",
   "description": "",
   "privacyStatement": "",
@@ -10,7 +10,8 @@
   "help": "",
   "url": "",
   "logo": "",
-  "dependencies": [{
+  "dependencies": [
+    {
       "id": "999f2a3b-5365-4a0d-b450-9b57036cef68",
       "name": "PMP Application Data",
       "publisher": "PT SME Solution",
@@ -43,7 +44,7 @@
   ],
   "screenshots": [],
   "platform": "1.0.0.0",
-  "application": "26.0.0.0",
+  "application": "27.0.0.0",
   "idRanges": [
     {
       "from": 50100,
@@ -55,7 +56,7 @@
     "allowDownloadingSource": true,
     "includeSourceInSymbolFile": true
   },
-  "runtime": "15.0",
+  "runtime": "16.0",
   "features": [
     "NoImplicitWith"
   ]

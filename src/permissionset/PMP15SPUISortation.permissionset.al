@@ -19,5 +19,10 @@ permissionset 60401 PMP15SPUISortation
         query "PMP15 SOR-Detail Result Pkg-No"=X,
         page "PMP15 SOR Inspection Packing"=X,
         page "PMP15 SOR Inspect. Pckg. Line"=X,
-        page "PMP15 SOR Inspection Pkg. List"=X;
+        page "PMP15 SOR Inspection Pkg. List"=X,
+        page "PMP15 SOR Unpack Curr-Det. Res"=X,
+        page "PMP15 SOR Unpack New-Det. Res"=X,
+        page "PMP15 SOR Unpack Pkg. Card"=X,
+        query "PMP15 Curr & Prev Bin Query"=X,
+        query "PMP15 ProdBOMLineItemTypeQuery"=X;
 }

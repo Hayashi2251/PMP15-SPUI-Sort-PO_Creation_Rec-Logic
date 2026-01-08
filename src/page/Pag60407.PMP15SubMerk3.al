@@ -15,7 +15,8 @@ page 60407 "PMP15 Sub Merk 3"
     ApplicationArea = All;
     Caption = 'Sub Merk 3';
     PageType = List;
-    SourceTable = "PMP15 Sub Merk 3";
+    SourceTable = "PMP15 Sub Merk";
+    SourceTableView = where(Type = const("Sub Merk 3"));
     UsageCategory = Lists;
 
     layout
@@ -29,15 +30,38 @@ page 60407 "PMP15 Sub Merk 3"
                     ApplicationArea = All;
                     ToolTip = 'Specifies the value of the Tobacco Type field.', Comment = '%';
                 }
-                field("Sub Merk 2 Code"; Rec."Sub Merk 2 Code")
-                {
-                    ApplicationArea = All;
-                    ToolTip = 'Specifies the value of the Submerk 2 field.', Comment = '%';
-                }
                 field("Code"; Rec."Code")
                 {
                     ApplicationArea = All;
                     ToolTip = 'Specifies the value of the Code field.', Comment = '%';
+                }
+                field("Sub Merk 2 Code"; Rec."Sub Merk 2 Code")
+                {
+                    ApplicationArea = All;
+                    ToolTip = 'Specifies the value of the Submerk 2 field.', Comment = '%';
+                    trigger OnValidate()
+                    var
+                        SubMerkRec2: Record "PMP15 Sub Merk";
+                        SubMerkRec3: Record "PMP15 Sub Merk";
+                    begin
+                        // PERFORM UNIQUE VALIDATION HERE
+                        CheckDuplicateSubMerk3(Rec, xRec);
+                    end;
+
+                    trigger OnLookup(var Text: Text): Boolean
+                    var
+                        SubMerkRec2: Record "PMP15 Sub Merk";
+                        SubMerkRec3: Record "PMP15 Sub Merk";
+                    begin
+                        SubMerkRec2.SetRange(Type, SubMerkRec2.Type::"Sub Merk 2");
+                        SubMerkRec2.SetRange("Tobacco Type", Rec."Tobacco Type");
+                        if Page.RunModal(Page::"PMP15 Sub Merk 2", SubMerkRec2) = Action::LookupOK then begin
+                            Rec."Sub Merk 2 Code" := SubMerkRec2.Code;
+
+                            // PERFORM UNIQUE VALIDATION HERE
+                            CheckDuplicateSubMerk3(Rec, xRec);
+                        end;
+                    end;
                 }
                 field(Description; Rec.Description)
                 {
@@ -62,4 +86,18 @@ page 60407 "PMP15 Sub Merk 3"
             }
         }
     }
+
+    procedure CheckDuplicateSubMerk3(var SMRec: Record "PMP15 Sub Merk"; xSMRec: Record "PMP15 Sub Merk")
+    var
+        SubMerkRec3: Record "PMP15 Sub Merk";
+    begin
+        SubMerkRec3.SetRange(Type, SubMerkRec3.Type::"Sub Merk 3");
+        SubMerkRec3.SetRange("Tobacco Type", SMRec."Tobacco Type");
+        SubMerkRec3.SetRange("Sub Merk 2 Code", SMRec."Sub Merk 2 Code");
+        if SubMerkRec3.Count > 0 then begin
+            SMRec."Sub Merk 2 Code" := xSMRec."Sub Merk 2 Code";
+            SubMerkRec3.FindFirst();
+            Error('There is a duplicate Sub Merk 3 with the Tobacco Type (%1) and the Sub Merk 2 Code (%2) with the Code of %3', SMRec."Tobacco Type", SubMerkRec3."Sub Merk 2 Code", SubMerkRec3.Code);
+        end;
+    end;
 }

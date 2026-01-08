@@ -30,20 +30,22 @@ page 60410 "PMP15 Sortation PO Creation"
                 group(General)
                 {
                     Caption = 'General';
+                    field(Rework; Rec.Rework)
+                    {
+                        ApplicationArea = All;
+                        Caption = 'Rework';
+                        ToolTip = 'Specifies the value of the Rework field.', Comment = '%';
+                    }
                     field("Sorted Item No."; Rec."Sorted Item No.")
                     {
                         ApplicationArea = All;
                         Caption = 'Sorted Item No.';
                         ToolTip = 'Specifies the value of the Sorted Item No. field.', Comment = '%';
-                        trigger OnValidate()
-                        begin
-                            Rec."Sorted Variant Code" := '';
-                        end;
                     }
                     field("Sorted Variant Code"; Rec."Sorted Variant Code")
                     {
                         ApplicationArea = All;
-                        Caption = 'Inspection Packing List No.';
+                        Caption = 'Sorted Variant Code';
                         ToolTip = 'Specifies the value of the Sorted Variant Code field.', Comment = '%';
                     }
                     field("Sorted Item Description"; Rec."Sorted Item Description")
@@ -52,12 +54,6 @@ page 60410 "PMP15 Sortation PO Creation"
                         Caption = 'Sorted Item Description';
                         ToolTip = 'Specifies the value of the Sorted Item Description field.', Comment = '%';
                         Editable = false;
-                    }
-                    field(Rework; Rec.Rework)
-                    {
-                        ApplicationArea = All;
-                        Caption = 'Rework';
-                        ToolTip = 'Specifies the value of the Rework field.', Comment = '%';
                     }
                     field("Unsorted Item No."; Rec."Unsorted Item No.")
                     {
@@ -112,54 +108,77 @@ page 60410 "PMP15 Sortation PO Creation"
                         ToolTip = 'Specifies the value of the Lot No. field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            BinRec: Record Bin;
+                            CurrPrevBinQuery: Query "PMP15 Curr & Prev Bin Query";
+                            LotNosByBin: Query "Lot Numbers by Bin";
+                            // BinRec: Record Bin;
                             TempLot: Record "Lot Bin Buffer" temporary;
                             LotPage: Page "PMP15 Lot No by Bin Factbox";
-                            LotNosByBin: Query "Lot Numbers by Bin";
                             SelectionFilterManagement: Codeunit SelectionFilterManagement;
                             RecRef: RecordRef;
+                            PrevBinCode: Code[20];
                             Count: Integer;
                         begin
+                            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
                             Clear(Rec."Lot No.");
-                            LotNosByBin.SetRange(Item_No, Rec."Unsorted Item No.");
-                            LotNosByBin.SetRange(Variant_Code, Rec."Unsorted Variant Code");
-                            LotNosByBin.SetRange(Location_Code, ExtCompanySetup."PMP15 SOR Location Code");
-                            LotNosByBin.SetFilter(Lot_No, '<>%1', '');
-                            LotNosByBin.Open();
-                            TempLot.DeleteAll();
-                            while LotNosByBin.Read do begin
-                                Count += 1;
-                                BinRec.SetRange("Location Code", LotNosByBin.Location_Code);
-                                BinRec.SetRange(Code, LotNosByBin.Bin_Code);
-                                if BinRec.FindFirst() then begin
-                                    if BinRec."PMP15 Bin Type" = BinRec."PMP15 Bin Type"::"0" then begin
-                                        TempLot.Init();
-                                        TempLot."Item No." := LotNosByBin.Item_No;
-                                        TempLot."Variant Code" := LotNosByBin.Variant_Code;
-                                        TempLot."Zone Code" := LotNosByBin.Zone_Code;
-                                        TempLot."Bin Code" := LotNosByBin.Bin_Code;
-                                        TempLot."Location Code" := LotNosByBin.Location_Code;
-                                        TempLot."Lot No." := LotNosByBin.Lot_No;
-                                        if TempLot.Find() then begin
-                                            TempLot."Qty. (Base)" += LotNosByBin.Sum_Qty_Base;
-                                            TempLot.Modify();
-                                        end else begin
-                                            TempLot."Qty. (Base)" := LotNosByBin.Sum_Qty_Base;
-                                            TempLot.Insert();
-                                        end;
+                            Clear(PrevBinCode);
+
+                            // Get the Bin first | Bin Code = Previous Bin Code that has SOR Bin Type: 0 in Table Bins where Location Code = Location Code
+                            CurrPrevBinQuery.SetRange(CurrPrevBinQuery.CURR_LocationCode, ExtCompanySetup."PMP15 SOR Location Code");
+                            CurrPrevBinQuery.SetRange(CurrPrevBinQuery.PREV_PMP15BinType, CurrPrevBinQuery.PREV_PMP15BinType::"0");
+                            CurrPrevBinQuery.Open();
+                            if CurrPrevBinQuery.Read() then begin
+                                // Get the LotNosByBin
+                                LotNosByBin.SetRange(Item_No, Rec."RM Item No.");
+                                LotNosByBin.SetRange(Variant_Code, Rec."RM Variant Code");
+                                LotNosByBin.SetRange(Location_Code, ExtCompanySetup."PMP15 SOR Location Code");
+                                LotNosByBin.SetFilter(Lot_No, '<>%1', '');
+                                LotNosByBin.Open();
+                                TempLot.DeleteAll();
+                                while LotNosByBin.Read do begin
+                                    Count += 1;
+                                    // BinRec.SetRange("Location Code", LotNosByBin.Location_Code);
+                                    // BinRec.SetRange(Code, LotNosByBin.Bin_Code);
+                                    // if BinRec.FindFirst() then begin
+                                    // if BinRec."PMP15 Bin Type" = BinRec."PMP15 Bin Type"::"0" then begin
+                                    TempLot.Init();
+                                    TempLot."Item No." := LotNosByBin.Item_No;
+                                    TempLot."Variant Code" := LotNosByBin.Variant_Code;
+                                    TempLot."Zone Code" := LotNosByBin.Zone_Code;
+                                    TempLot."Bin Code" := LotNosByBin.Bin_Code;
+                                    TempLot."Location Code" := LotNosByBin.Location_Code;
+                                    TempLot."Lot No." := LotNosByBin.Lot_No;
+                                    if TempLot.Find() then begin
+                                        TempLot."Qty. (Base)" += LotNosByBin.Sum_Qty_Base;
+                                        TempLot.Modify();
+                                    end else begin
+                                        TempLot."Qty. (Base)" := LotNosByBin.Sum_Qty_Base;
+                                        TempLot.Insert();
                                     end;
+                                    // end;
+                                    // end; // ending statement of BinRec
                                 end;
+
+                                LotNosByBin.Close();
+                                if Count > 0 then begin
+                                    if Page.RunModal(Page::"PMP15 Lot No by Bin Factbox", TempLot) = Action::LookupOK then begin
+                                        Rec.Validate("Lot No.", TempLot."Lot No.");
+                                        Rec.Validate(Quantity, TempLot."Qty. (Base)");
+                                    end;
+                                end else
+                                    Message('There is No Lot No. found. for the "%1" with the variant of "%2", in the location of "%3" from the Bin Content.', Rec."Unsorted Item No.", Rec."Unsorted Variant Code", ExtCompanySetup."PMP15 SOR Location Code");
                             end;
-                            LotNosByBin.Close();
-                            if Count > 0 then begin
-                                if Page.RunModal(Page::"PMP15 Lot No by Bin Factbox", TempLot) = Action::LookupOK then begin
-                                    Rec.Validate("Lot No.", TempLot."Lot No.");
-                                    Rec.Validate(Quantity, TempLot."Qty. (Base)");
-                                end;
-                            end else
-                                Message('There is No Lot No. found. for the "%1" with the variant of "%2", in the location of "%3" from the Bin Content.', Rec."Unsorted Item No.", Rec."Unsorted Variant Code", ExtCompanySetup."PMP15 SOR Location Code");
+                            CurrPrevBinQuery.Close();
+                            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
                         end;
                     }
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    field("PMP15 Allowance Packing Weight"; Rec."PMP15 Allowance Packing Weight")
+                    {
+                        ApplicationArea = All;
+                        Caption = 'Allowance Packing Weight';
+                        ToolTip = 'Specifies the value of the Allowance Packing Weight field.', Comment = '%';
+                    }
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
                     field("Tarre Weight (Kg)"; Rec."Tarre Weight (Kg)")
                     {
                         ApplicationArea = All;
@@ -185,6 +204,17 @@ page 60410 "PMP15 Sortation PO Creation"
                         Caption = 'Reference No.';
                         ToolTip = 'Specifies the value of the Reference No. field.', Comment = '%';
                     }
+
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    field("PMP15 Item Owner Internal"; Rec."PMP15 Item Owner Internal")
+                    {
+                        ApplicationArea = All;
+                        Caption = 'Item Owner Internal';
+                        ToolTip = 'Specifies the value of the Item Owner Internal field.', Comment = '%';
+                        Editable = false;
+                        Visible = false;
+                    }
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
                 }
             }
         }
@@ -211,6 +241,7 @@ page 60410 "PMP15 Sortation PO Creation"
                     end;
                     SortProdOrdPageCard.SetRecord(ProdOrder);
                     SortProdOrdPageCard.Run();
+                    CurrPage.Close();
                 end;
             }
             action(Cancel)
@@ -276,7 +307,10 @@ page 60410 "PMP15 Sortation PO Creation"
         IsSetRecfromProdOrder, Release_Visibility, Completed_Visibility : Boolean;
 
     trigger OnOpenPage()
+    var
+        SORPOCreationRec: Record "PMP15 Sortation PO Creation";
     begin
+        SORPOCreationRec.Reset();
         ExtCompanySetup.Get();
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Item Owner Internal"));
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 Sort-Prod. Order Nos."));
@@ -284,6 +318,11 @@ page 60410 "PMP15 Sortation PO Creation"
 
         if not IsSetRecfromProdOrder then begin
             Rec.Init();
+            if SORPOCreationRec.FindLast() then begin
+                Rec."Entry No." := SORPOCreationRec."Entry No." + 1;
+            end else begin
+                Rec."Entry No." := 1;
+            end;
             Rec."PMP15 Item Owner Internal" := ExtCompanySetup."PMP15 SOR Item Owner Internal";
             Status := Status::"Firm Planned";
             Rec.Insert();

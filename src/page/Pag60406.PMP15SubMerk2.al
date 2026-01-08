@@ -15,7 +15,8 @@ page 60406 "PMP15 Sub Merk 2"
     ApplicationArea = All;
     Caption = 'Sub Merk 2';
     PageType = List;
-    SourceTable = "PMP15 Sub Merk 2";
+    SourceTable = "PMP15 Sub Merk";
+    SourceTableView = where(Type = const("Sub Merk 2"));
     UsageCategory = Lists;
 
     layout

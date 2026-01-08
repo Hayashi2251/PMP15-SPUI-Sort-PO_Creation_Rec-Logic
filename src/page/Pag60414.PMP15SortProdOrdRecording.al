@@ -139,41 +139,49 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         end;
                     end;
                 }
-                // field("From Bin Code"; Rec."From Bin Code")
-                // {
-                //     ApplicationArea = All;
-                //     Caption = 'From Bin Code';
-                //     ToolTip = 'Specifies the value of the From Bin Code field.', Comment = '%';
-                //     LookupPageId = "Bin List";
-                //     trigger OnLookup(var Text: Text): Boolean
-                //     var
-                //         BinRec: Record Bin;
-                //     begin
-                //         BinRec.Reset();
-                //         BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(SORStep_Step));
-                //         if Page.RunModal(Page::"Bin List", BinRec) = Action::LookupOK then begin
-                //             Rec."From Bin Code" := BinRec."PMP15 Previous Bin";
-                //             Rec."To Bin Code" := BinRec.Code;
-                //         end;
-                //     end;
-                // }
-                // field("To Bin Code"; Rec."To Bin Code")
-                // {
-                //     ApplicationArea = All;
-                //     Caption = 'To Bin Code';
-                //     ToolTip = 'Specifies the value of the To Bin Code field.', Comment = '%';
-                //     trigger OnLookup(var Text: Text): Boolean
-                //     var
-                //         BinRec: Record Bin;
-                //     begin
-                //         BinRec.Reset();
-                //         BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(SORStep_Step));
-                //         if Page.RunModal(Page::"Bin List", BinRec) = Action::LookupOK then begin
-                //             Rec."From Bin Code" := BinRec."PMP15 Previous Bin";
-                //             Rec."To Bin Code" := BinRec.Code;
-                //         end;
-                //     end;
-                // }
+
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                field("From Bin Code"; Rec."From Bin Code")
+                {
+                    ApplicationArea = All;
+                    Caption = 'From Bin Code';
+                    ToolTip = 'Specifies the value of the From Bin Code field.', Comment = '%';
+                    LookupPageId = "Bin List";
+                    Editable = false;
+                    Visible = false;
+                    // trigger OnLookup(var Text: Text): Boolean
+                    // var
+                    //     BinRec: Record Bin;
+                    // begin
+                    //     BinRec.Reset();
+                    //     BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(SORStep_Step));
+                    //     if Page.RunModal(Page::"Bin List", BinRec) = Action::LookupOK then begin
+                    //         Rec."From Bin Code" := BinRec."PMP15 Previous Bin";
+                    //         Rec."To Bin Code" := BinRec.Code;
+                    //     end;
+                    // end;
+                }
+                field("To Bin Code"; Rec."To Bin Code")
+                {
+                    ApplicationArea = All;
+                    Caption = 'To Bin Code';
+                    ToolTip = 'Specifies the value of the To Bin Code field.', Comment = '%';
+                    Editable = false;
+                    Visible = false;
+                    // trigger OnLookup(var Text: Text): Boolean
+                    // var
+                    //     BinRec: Record Bin;
+                    // begin
+                    //     BinRec.Reset();
+                    //     BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(SORStep_Step));
+                    //     if Page.RunModal(Page::"Bin List", BinRec) = Action::LookupOK then begin
+                    //         Rec."From Bin Code" := BinRec."PMP15 Previous Bin";
+                    //         Rec."To Bin Code" := BinRec.Code;
+                    //     end;
+                    // end;
+                }
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
                 group(Result_STEP_0)
                 {
                     Caption = 'Result';
@@ -194,7 +202,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                                 PkgNoRec.SetRange("Item No.", rec."Unsorted Item No.");
                                 PkgNoRec.SetRange("Variant Code", Rec."Unsorted Variant Code");
                                 PkgNoRec.SetFilter(Inventory, '>%1', 0);
-                                PkgNoRec.SetRange("PMP04 Bin Code", Rec."To Bin Code");
+                                PkgNoRec.SetRange("PMP04 Bin Code", Rec."From Bin Code");
                                 if Page.RunModal(Page::"Package No. Information List", PkgNoRec) = Action::LookupOK then begin
                                     Rec."Package No." := PkgNoRec."Package No.";
                                     BinContent.Reset();
@@ -248,9 +256,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 1 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk1: Record "PMP15 Sub Merk 1";
+                            Submerk1: Record "PMP15 Sub Merk";
                         begin
                             Submerk1.Reset();
+                            Submerk1.SetRange(Type, Submerk1.Type::"Sub Merk 1");
                             Submerk1.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 1", Submerk1) = Action::LookupOK then begin
                                 Rec."Submerk 1" := Submerk1.Code;
@@ -350,9 +359,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         // Visible = (SORStep_Step = SORStep_Step::"0") OR (SORStep_Step = SORStep_Step::"1") OR (SORStep_Step = SORStep_Step::"2") OR (SORStep_Step = SORStep_Step::"3") OR (SORStep_Step = SORStep_Step::"4");
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk1: Record "PMP15 Sub Merk 1";
+                            Submerk1: Record "PMP15 Sub Merk";
                         begin
                             Submerk1.Reset();
+                            Submerk1.SetRange(Type, Submerk1.Type::"Sub Merk 1");
                             Submerk1.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 1", Submerk1) = Action::LookupOK then begin
                                 Rec."Submerk 1" := Submerk1.Code;
@@ -452,9 +462,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 1 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk1: Record "PMP15 Sub Merk 1";
+                            Submerk1: Record "PMP15 Sub Merk";
                         begin
                             Submerk1.Reset();
+                            Submerk1.SetRange(Type, Submerk1.Type::"Sub Merk 1");
                             Submerk1.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 1", Submerk1) = Action::LookupOK then begin
                                 Rec."Submerk 1" := Submerk1.Code;
@@ -468,9 +479,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 2 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk2: Record "PMP15 Sub Merk 2";
+                            Submerk2: Record "PMP15 Sub Merk";
                         begin
                             Submerk2.Reset();
+                            Submerk2.SetRange(Type, Submerk2.Type::"Sub Merk 2");
                             Submerk2.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 2", Submerk2) = Action::LookupOK then begin
                                 Rec."Submerk 2" := Submerk2.Code;
@@ -569,9 +581,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 1 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk1: Record "PMP15 Sub Merk 1";
+                            Submerk1: Record "PMP15 Sub Merk";
                         begin
                             Submerk1.Reset();
+                            Submerk1.SetRange(Type, Submerk1.Type::"Sub Merk 1");
                             Submerk1.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 1", Submerk1) = Action::LookupOK then begin
                                 Rec."Submerk 1" := Submerk1.Code;
@@ -585,9 +598,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 2 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk2: Record "PMP15 Sub Merk 2";
+                            Submerk2: Record "PMP15 Sub Merk";
                         begin
                             Submerk2.Reset();
+                            Submerk2.SetRange(Type, Submerk2.Type::"Sub Merk 2");
                             Submerk2.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 2", Submerk2) = Action::LookupOK then begin
                                 Rec."Submerk 2" := Submerk2.Code;
@@ -601,9 +615,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 3 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk3: Record "PMP15 Sub Merk 3";
+                            Submerk3: Record "PMP15 Sub Merk";
                         begin
                             Submerk3.Reset();
+                            Submerk3.SetRange(Type, Submerk3.Type::"Sub Merk 3");
                             Submerk3.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 3", Submerk3) = Action::LookupOK then begin
                                 Rec."Submerk 3" := Submerk3.Code;
@@ -617,9 +632,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 4 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk4: Record "PMP15 Sub Merk 4";
+                            Submerk4: Record "PMP15 Sub Merk";
                         begin
                             Submerk4.Reset();
+                            Submerk4.SetRange(Type, Submerk4.Type::"Sub Merk 4");
                             Submerk4.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 4", Submerk4) = Action::LookupOK then begin
                                 Rec."Submerk 4" := Submerk4.Code;
@@ -633,9 +649,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 5 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk5: Record "PMP15 Sub Merk 5";
+                            Submerk5: Record "PMP15 Sub Merk";
                         begin
                             Submerk5.Reset();
+                            Submerk5.SetRange(Type, Submerk5.Type::"Sub Merk 5");
                             Submerk5.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 5", Submerk5) = Action::LookupOK then begin
                                 Rec."Submerk 5" := Submerk5.Code;
@@ -734,9 +751,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 1 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk1: Record "PMP15 Sub Merk 1";
+                            Submerk1: Record "PMP15 Sub Merk";
                         begin
                             Submerk1.Reset();
+                            Submerk1.SetRange(Type, Submerk1.Type::"Sub Merk 1");
                             Submerk1.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 1", Submerk1) = Action::LookupOK then begin
                                 Rec."Submerk 1" := Submerk1.Code;
@@ -750,9 +768,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 2 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk2: Record "PMP15 Sub Merk 2";
+                            Submerk2: Record "PMP15 Sub Merk";
                         begin
                             Submerk2.Reset();
+                            Submerk2.SetRange(Type, Submerk2.Type::"Sub Merk 2");
                             Submerk2.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 2", Submerk2) = Action::LookupOK then begin
                                 Rec."Submerk 2" := Submerk2.Code;
@@ -766,9 +785,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 3 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk3: Record "PMP15 Sub Merk 3";
+                            Submerk3: Record "PMP15 Sub Merk";
                         begin
                             Submerk3.Reset();
+                            Submerk3.SetRange(Type, Submerk3.Type::"Sub Merk 3");
                             Submerk3.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 3", Submerk3) = Action::LookupOK then begin
                                 Rec."Submerk 3" := Submerk3.Code;
@@ -782,9 +802,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 4 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk4: Record "PMP15 Sub Merk 4";
+                            Submerk4: Record "PMP15 Sub Merk";
                         begin
                             Submerk4.Reset();
+                            Submerk4.SetRange(Type, Submerk4.Type::"Sub Merk 4");
                             Submerk4.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 4", Submerk4) = Action::LookupOK then begin
                                 Rec."Submerk 4" := Submerk4.Code;
@@ -798,9 +819,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Submerk 5 field.', Comment = '%';
                         trigger OnLookup(var Text: Text): Boolean
                         var
-                            Submerk5: Record "PMP15 Sub Merk 5";
+                            Submerk5: Record "PMP15 Sub Merk";
                         begin
                             Submerk5.Reset();
+                            Submerk5.SetRange(Type, Submerk5.Type::"Sub Merk 5");
                             Submerk5.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 5", Submerk5) = Action::LookupOK then begin
                                 Rec."Submerk 5" := Submerk5.Code;
@@ -885,6 +907,30 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ToolTip = 'Specifies the value of the Unit of Measure Code field.', Comment = '%';
                     }
                 } // STEP 3
+
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                field("Weighing Scale Quantity"; Rec."Weighing Scale Quantity")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Weighing Scale Quantity';
+                    ToolTip = 'Specifies the value of the Weighing Scale Quantity field.', Comment = '%';
+                    Editable = false;
+                }
+                field("Allowance Packing Weight"; Rec."Allowance Packing Weight")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Allowance Packing Weight';
+                    ToolTip = 'Specifies the value of the Allowance Packing Weight field.', Comment = '%';
+                    Editable = false;
+                }
+                field("Tarre Weight"; Rec."Tarre Weight")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Tarre Weight';
+                    ToolTip = 'Specifies the value of the Tarre Weight field.', Comment = '%';
+                    Editable = false;
+                }
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
             }
         }
     }
@@ -935,15 +981,25 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
         IsSetRecfromProdOrder: Boolean;
 
     trigger OnOpenPage()
+    var
+        SORPORecording: Record "PMP15 Sortation PO Recording";
     begin
+        SORPORecording.Reset();
+
         SORStep_Step := SORStep_Step::"0";
         Clear(SORStep_Code);
         ExtCompanySetup.Get();
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Item Owner Internal"));
 
+        Rec.Init();
+        if SORPORecording.FindLast() then begin
+            Rec."Entry No." := SORPORecording."Entry No." + 1;
+        end else begin
+            Rec."Entry No." := 1;
+        end;
+
+        Rec."Posting Date" := WorkDate();
         if IsSetRecfromProdOrder then begin
-            Rec.Init();
-            Rec."Posting Date" := WorkDate();
             Rec.Validate("Sortation Prod. Order No.", ProdOrder."No.");
             ProdOrderLine.Reset();
             ProdOrderLine.SetRange("Prod. Order No.", ProdOrder."No.");
@@ -951,12 +1007,9 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
             if ProdOrderLine.FindFirst() then begin
                 Rec."Unit of Measure Code" := ProdOrderLine."Unit of Measure Code";
             end;
-            Rec.Insert();
-        end else begin
-            Rec.Init();
-            Rec."Posting Date" := WorkDate();
-            Rec.Insert();
         end;
+
+        Rec.Insert();
     end;
 
     trigger OnClosePage()

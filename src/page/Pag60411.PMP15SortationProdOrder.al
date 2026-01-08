@@ -117,13 +117,22 @@ page 60411 "PMP15 Sortation Prod. Order"
                     ToolTip = 'Specifies the value of the Lot No. field.';
                     Editable = false;
                 }
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
                 field("Tarre Weight"; Rec."PMP15 Tarre Weight (Kg)")
                 {
                     ApplicationArea = All;
                     Caption = 'Tarre Weight';
                     ToolTip = 'Specifies the value of the Tarre Weight field.';
-                    Editable = false;
+                    // Editable = false;
                 }
+                field("PMP15 Allowance Packing Weight"; Rec."PMP15 Allowance Packing Weight")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Allowance Packing Weight';
+                    ToolTip = 'Specifies the value of the Allowance Packing Weight field.';
+                    // Editable = false;
+                }
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
                 field(Quantity; Rec.Quantity)
                 {
                     ApplicationArea = All;
@@ -144,6 +153,7 @@ page 60411 "PMP15 Sortation Prod. Order"
                 ApplicationArea = All;
                 SubPageLink = "Prod. Order No." = field("No.");
                 UpdatePropagation = Both;
+                Visible = false;
             }
             // part(UnsortedItemLine; "PMP15 Sort-Prod.Order. Subform")
             // {
