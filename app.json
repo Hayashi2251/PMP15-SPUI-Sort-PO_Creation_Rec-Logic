@@ -2,7 +2,7 @@
   "id": "ebad0c1f-85fb-43c2-80da-4e9148b6512b",
   "name": "PMP SPUI - Sort-PO Creation & Recording (Logic)",
   "publisher": "PT SME Solution",
-  "version": "1.0.2700.1",
+  "version": "1.0.2700.14",
   "brief": "",
   "description": "",
   "privacyStatement": "",
@@ -34,6 +34,18 @@
       "name": "SMES ID Localization (Logic)",
       "publisher": "PT SME Solution",
       "version": "1.0.2603.0"
+    },
+    {
+      "id": "82d27e28-6d27-47ce-bc2f-b571bfb3f951",
+      "name": "PMP SPUI - Item and Bale Info",
+      "publisher": "PT SME Solution",
+      "version": "1.0.2700.0"
+    },
+    {
+      "id": "91dbfaa6-c617-44cc-9172-652159aade81",
+      "name": "PMP SPUI BOBBIN - Cut in Bobbin Process (Logic)",
+      "publisher": "PT SME Solution",
+      "version": "1.0.2500.0"
     },
     {
       "id": "8fd90686-a75e-4439-9f79-187b21ba6093",

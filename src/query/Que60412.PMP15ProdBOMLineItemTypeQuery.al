@@ -1,6 +1,18 @@
 query 60412 "PMP15 ProdBOMLineItemTypeQuery"
 {
-    Caption = 'PMP15 ProdBOMLineItemTypeQuery';
+    // version PMP15 
+    
+    // List Modification
+    // Version List       Name
+    // =============================================================================================================
+    // PMP15              PMP SPUI - Sort-PO Creation & Recording (Logic)
+    
+    // QUERY
+    // Date        Developer  Version List  Description
+    // =============================================================================================================
+    // 2026/01/10  SW         PMP15         Create Query
+    
+    Caption = 'Production BOM Line with Item Type';
     QueryType = Normal;
 
     elements

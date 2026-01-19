@@ -189,4 +189,9 @@ pageextension 60408 "PMP15 Whse Entry List Ext" extends "Warehouse Entries"
     #region Actions
     actions { }
     #endregion Actions
+
+    trigger OnAfterGetCurrRecord()
+    begin
+        Rec.SetAutoCalcFields("PMP15 Bin SOR Step");
+    end;
 }

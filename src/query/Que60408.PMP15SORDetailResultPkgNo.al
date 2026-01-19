@@ -12,7 +12,7 @@ query 60408 "PMP15 SOR-Detail Result Pkg-No"
     // =============================================================================================================
     // 2025/10/31  SW         PMP15         Create Query
 
-    Caption = 'PMP15 SOR-Detail Result Pkg-No';
+    Caption = 'Sortation Detail Package No.';
     QueryType = Normal;
 
     elements
@@ -28,6 +28,7 @@ query 60408 "PMP15 SOR-Detail Result Pkg-No"
             dataitem(PMP15_Sortation_Detail_Quality; "PMP15 Sortation Detail Quality")
             {
                 DataItemLink = "Item No." = PackageNoInformation."Item No.", "Variant Code" = PackageNoInformation."Variant Code", "Package No." = PackageNoInformation."Package No.";
+                column(SDR_Type; "Tobacco Type") { Caption = 'SDR Item No.'; }
                 column(SDR_ItemNo; "Item No.") { Caption = 'SDR Item No.'; }
                 column(SDR_VariantCode; "Variant Code") { Caption = 'SDR Var. Code'; }
                 column(SDR_PackageNo; "Package No.") { Caption = 'SDR Pkg No.'; }
@@ -60,6 +61,21 @@ query 60408 "PMP15 SOR-Detail Result Pkg-No"
                 // }
                 #endregion REMOVED
                 //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/14 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                dataitem(PMP15_Sub_Merk_3; "PMP15 Sub Merk")
+                {
+                    DataItemLink = Code = PMP15_Sortation_Detail_Quality."Sub Merk 3";
+                    DataItemTableFilter = Type = const("Sub Merk 3");
+
+                    column(SM3_Tobacco_Type; "Tobacco Type") { }
+                    column(SM3_Code; Code) { }
+                    column(SM3_Description; Description) { }
+                    column(SM3_Item_Owner_Internal; "Item Owner Internal") { }
+                    column(SM3_Group; Group) { }
+                    column(SM3_Ranking; Ranking) { }
+                }
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/14 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
             }
         }
     }

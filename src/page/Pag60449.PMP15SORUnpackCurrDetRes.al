@@ -13,8 +13,9 @@ page 60449 "PMP15 SOR Unpack Curr-Det. Res"
     // 2026/01/06  SW         PMP15                                     Create Page
     // 
     ApplicationArea = All;
-    Caption = 'Sortation Unpack Package Current Detail Result';
+    Caption = 'Current Sortation Detail Result';
     PageType = ListPart;
+    Editable = false;
     SourceTable = "PMP15 SOR Unpack Curr-Det. Res";
 
     layout
@@ -29,6 +30,7 @@ page 60449 "PMP15 SOR Unpack Curr-Det. Res"
                     Caption = 'Document No.';
                     ToolTip = 'Specifies the value of the Document No. field.', Comment = '%';
                     Editable = false;
+                    Visible = false;
                 }
                 field("Line No."; Rec."Line No.")
                 {
@@ -36,19 +38,22 @@ page 60449 "PMP15 SOR Unpack Curr-Det. Res"
                     Caption = 'Line No.';
                     ToolTip = 'Specifies the value of the Line No. field.', Comment = '%';
                     Editable = false;
+                    Visible = false;
+                }
+
+
+                field("Package No."; Rec."Package No.")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Package No.';
+                    ToolTip = 'Specifies the value of the Package No. field.', Comment = '%';
+                    Editable = false;
                 }
                 field("Lot No."; Rec."Lot No.")
                 {
                     ApplicationArea = All;
                     Caption = 'Lot No.';
                     ToolTip = 'Specifies the value of the Lot No. field.', Comment = '%';
-                    Editable = false;
-                }
-                field("Package No."; Rec."Package No.")
-                {
-                    ApplicationArea = All;
-                    Caption = 'Package No.';
-                    ToolTip = 'Specifies the value of the Package No. field.', Comment = '%';
                     Editable = false;
                 }
                 field("Sub Merk 1"; Rec."Sub Merk 1")

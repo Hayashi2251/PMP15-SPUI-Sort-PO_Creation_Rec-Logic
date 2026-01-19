@@ -1,5 +1,8 @@
 codeunit 60400 "PMP15 Sortation PO Mgmt"
 {
+    Permissions =
+        tabledata "Assembly Header" = RIMD,
+        tabledata "Assembly Line" = RIMD;
     // version PMP15 
 
     // List Modification
@@ -31,9 +34,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         ItemJnlLineReserve: Codeunit "Item Jnl. Line-Reserve";
         PkgNoInfoMgmt: Codeunit "Package Info. Management";
         PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
-        AssemblyPostMgmt: Codeunit "Assembly-Post";
         // 
-        RefreshProdOrder: Report "Refresh Production Order";
         ConfirmationPage: Page "PMP02 Confirmation Page";
         // 
         TempGlobalReservEntry: Record "Reservation Entry" temporary;
@@ -50,7 +51,8 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         SkipLot: Boolean;
         DirectTransfer: Boolean;
         HideValidationDialog: Boolean;
-    // PartialGlobalDataSetExists: Boolean;
+        // PartialGlobalDataSetExists: Boolean;
+        PreviewModeErr: Label 'Preview mode.';
 
 
 
@@ -247,14 +249,43 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         end;
     end;
 
+    /// <summary> Synchronizes Crop and Tarre Weight fields on the Production Order based on the selected Lot No. when SOR Rework is enabled. </summary>
+    [EventSubscriber(ObjectType::Table, Database::"Production Order", OnAfterValidateEvent, "PMP15 Lot No.", false, false)]
+    local procedure PMP15ProdOrder_OnAfterValidateEvent_LotNo(var Rec: Record "Production Order"; var xRec: Record "Production Order"; CurrFieldNo: Integer)
+    var
+        LotNoInfoRec: Record "Lot No. Information";
+        ProdOrdComp: Record "Prod. Order Component";
+    begin
+        if Rec."PMP15 SOR Rework" then begin
+            LotNoInfoRec.Reset();
+            ProdOrdComp.Reset();
+
+            ProdOrdComp.SetRange("Prod. Order No.", Rec."No.");
+            ProdOrdComp.SetRange("PMP15 Unsorted Item", true);
+            if ProdOrdComp.FindFirst() then begin
+                LotNoInfoRec.SetRange("Item No.", ProdOrdComp."Item No.");
+                LotNoInfoRec.SetRange("Variant Code", ProdOrdComp."Variant Code");
+                LotNoInfoRec.SetRange("Lot No.", Rec."PMP15 Lot No.");
+                if LotNoInfoRec.FindFirst() then begin
+                    Rec."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                    Rec."PMP15 Tarre Weight (Kg)" := LotNoInfoRec."PMP14 Tarre Weight (Kgs)";
+                end;
+            end;
+        end;
+    end;
+
     /// <summary>Simulates the insertion of a production order record for validation before actual creation.</summary>
     /// <remarks>Initializes a temporary production order based on sortation data and extended company setup, assigns default values, and returns the success result of the simulated insert.</remarks>
     /// <param name="tempProdOrderRec">The temporary production order record to simulate insertion.</param>
     /// <param name="SortProdOrdCreation">The temporary sortation production order creation record used as the data source.</param>
     /// <returns>True if the simulated insert succeeds; otherwise, false.</returns>
     procedure SimulateInsertSuccess(var tempProdOrderRec: Record "Production Order" temporary; var SortProdOrdCreation: Record "PMP15 Sortation PO Creation" temporary) IsInsertSuccess: Boolean
+    var
+        LotNoInfoRec: Record "Lot No. Information";
     begin
         ExtCompanySetup.Get();
+        LotNoInfoRec.Reset();
+
         tempProdOrderRec.DeleteAll();
         tempProdOrderRec.Reset();
         tempProdOrderRec.Init();
@@ -273,9 +304,16 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         tempProdOrderRec.Validate("PMP15 RM Variant Code", SortProdOrdCreation."RM Variant Code");
         //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
         // tempProdOrderRec."PMP15 Crop" := Date2DMY(WorkDate(), 3);
-        tempProdOrderRec."PMP15 Crop" := Format(Date2DMY(WorkDate(), 3));
+        // tempProdOrderRec."PMP15 Crop" := Format(Date2DMY(WorkDate(), 3));
+
+        LotNoInfoRec.SetRange("Item No.", SortProdOrdCreation."Sorted Item No.");
+        LotNoInfoRec.SetRange("Variant Code", SortProdOrdCreation."Sorted Variant Code");
+        LotNoInfoRec.SetRange("Lot No.", SortProdOrdCreation."Lot No.");
+        if LotNoInfoRec.FindFirst() then begin
+            tempProdOrderRec."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+        end;
         //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
-        tempProdOrderRec."PMP15 Lot No." := SortProdOrdCreation."Lot No.";
+        tempProdOrderRec.Validate("PMP15 Lot No.", SortProdOrdCreation."Lot No.");
         tempProdOrderRec."PMP15 Tarre Weight (Kg)" := SortProdOrdCreation."Tarre Weight (Kg)";
         tempProdOrderRec."PMP15 Production Unit" := tempProdOrderRec."PMP15 Production Unit"::"SOR-Sortation";
         tempProdOrderRec."PMP15 SOR Rework" := SortProdOrdCreation.Rework;
@@ -288,26 +326,47 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         exit(tempProdOrderRec.Insert());
     end;
 
+    /// <summary> Refreshes a Production Order using default refresh parameters. </summary>
+    /// <remarks> This procedure acts as a wrapper for the extended RunRefreshProdOrder method. It triggers the Refresh Production Order report with predefined settings to recalculate lines, routings, and components without showing validation dialogs or request pages. </remarks>
+    /// <param name="ProdOrdRec"> The Production Order record to be refreshed. </param>
     procedure RunRefreshProdOrder(ProdOrdRec: Record "Production Order")
     begin
         RunRefreshProdOrder(ProdOrdRec, 1, true, true, true, false);
     end;
 
-    procedure RunRefreshProdOrder(ProdOrdRec: Record "Production Order"; Direction2: Option; CalcLines2: Boolean; CalcRoutings2: Boolean; CalcComponents2: Boolean; CreateInbRqst2: Boolean)
+    /// <summary> Refreshes a Production Order with configurable refresh options. </summary>
+    /// <remarks> This procedure executes the <b>Refresh Production Order</b> report for the specified Production Order and allows control over recalculation behavior, including lines, routings, components, and inbound requests. The process runs silently without displaying validation dialogs or request pages. If the Production Order does not exist, a user message is shown and the process is aborted. </remarks>
+    /// <param name="ProdOrdRec"> The Production Order record identifying the document to refresh. </param>
+    /// <param name="Direction2"> The refresh direction option passed to the Refresh Production Order report. </param>
+    /// <param name="CalcLines2"> Specifies whether production order lines should be recalculated. </param>
+    /// <param name="CalcRoutings2"> Specifies whether routings should be recalculated. </param>
+    /// <param name="CalcComponents2"> Specifies whether components should be recalculated. </param>
+    /// <param name="CreateInbRqst2"> Specifies whether inbound requests should be created during refresh. </param>
+    /// <returns> <b>true</b> if the Production Order was found and refreshed successfully; otherwise, <b>false</b>. </returns>
+    procedure RunRefreshProdOrder(ProdOrdRec: Record "Production Order"; Direction2: Option; CalcLines2: Boolean; CalcRoutings2: Boolean; CalcComponents2: Boolean; CreateInbRqst2: Boolean): Boolean
     var
         ProdOrder: Record "Production Order";
+        RefreshProdOrder: Report "Refresh Production Order";
     begin
         ProdOrder.SetRange("No.", ProdOrdRec."No.");
         if ProdOrder.FindFirst() then begin
             RefreshProdOrder.SetTableView(ProdOrder);
-            RefreshProdOrder.InitializeRequest(1, true, true, true, false);
+            RefreshProdOrder.InitializeRequest(Direction2, CalcLines2, CalcRoutings2, CalcComponents2, CreateInbRqst2);
             RefreshProdOrder.SetHideValidationDialog(true);
             RefreshProdOrder.UseRequestPage(false);
             RefreshProdOrder.Run();
-        end else
-            Error('There is no Production Order with the document number of %1', ProdOrdRec."No.");
+            exit(true);
+        end else begin
+            Message('There is no Production Order with the document number of %1', ProdOrdRec."No.");
+            exit(false);
+        end;
     end;
 
+    /// <summary> Creates and finalizes a new Production Order for sortation based on a temporary Production Order template. </summary>
+    /// <remarks> This procedure generates a new Production Order using data copied from a temporary record, assigns a new document number from the <b>Sort Production Order No. Series</b>, initializes key dates, and commits the record. After creation, it automatically runs the <b>Refresh Production Order</b> process to calculate lines, routings, and components. Depending on whether the Production Order is marked as <b>SOR Rework</b>, the procedure updates related Production Order Components by flagging them as unsorted items, aligning item numbers, variants, and quantities according to the provided sortation setup. </remarks>
+    /// <param name="ProdOrder"> The Production Order record that will be created and finalized. </param>
+    /// <param name="tempProdOrderRec"> A temporary Production Order record serving as the source template for the new document. </param> 
+    /// <param name="SortProdOrdCreation"> A temporary Sortation Production Order Creation record containing unsorted item and variant information. </param>
     procedure SortProdOrdCreationPost(var ProdOrder: Record "Production Order"; var tempProdOrderRec: Record "Production Order" temporary; var SortProdOrdCreation: Record "PMP15 Sortation PO Creation" temporary)
     var
         ProdOrderLine: Record "Prod. Order Line";
@@ -385,7 +444,11 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         InvShipmentPageDoc: Page "Invt. Shipment";
         BinContent: Record "Bin Content";
         InvDocLine: Record "Invt. Document Line";
-        SORBinCode: array[6] of Code[20]; // -- Bin Code = Bin with SOR Step 0 + "|" + Bin with SOR Step 1 + "|" + Bin with SOR Step 2 + "|" + Bin with SOR Step 3 + "|" + Bin with SOR Step 4 + "|" + Previous Bin with SOR Step 0
+        ProdOrdComp: Record "Prod. Order Component";
+        UnSORItemNo: Code[20];
+        UnSORItemDesc: Text;
+        UoMCode, UnSORVariantCode : Code[10];
+        SORBinCode: array[7] of Code[20]; // -- Bin Code = Bin with SOR Step 0 + "|" + Bin with SOR Step 1 + "|" + Bin with SOR Step 2 + "|" + Bin with SOR Step 3 + "|" + Bin with SOR Step 4 + "|" + Previous Bin with SOR Step 0
     begin
         ExtCompanySetup.Get();
         Clear(SORBinCode);
@@ -395,7 +458,9 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             InvDocHeader."Document Type" := InvDocHeader."Document Type"::Shipment; // add
             InvDocHeader."No. Series" := ExtCompanySetup."PMP15 SOR Inv. Shipment Nos";
             InvDocHeader."No." := NoSeriesMgmt.GetNextNo(InvDocHeader."No. Series", WorkDate());
-            InvDocHeader."Posting Description" := 'Shipment ' + InvDocHeader."No."; // add
+            InvDocHeader.InitRecord();
+
+            // InvDocHeader."Posting Description" := 'Shipment ' + InvDocHeader."No."; // add
             InvDocHeader."Location Code" := ProdOrder."Location Code";
             InvDocHeader.Validate("Document Date", WorkDate());
             InvDocHeader.Validate("Posting Date", WorkDate());
@@ -403,20 +468,38 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             // InvDocHeader."Posting Date" := WorkDate();
             InvDocHeader."PMP15 Production Order No." := ProdOrder."No.";
             InvDocHeader."PMP18 Reason Code" := ExtCompanySetup."PMP15 SOR Invt.Ship.Reason";
+            InvDocHeader."PMP15 Marked" := true;
             InvDocHeader.Insert();
-            Commit();
+            InvDocHeader.Mark(true);
+            // Commit();
+
+            ProdOrdComp.Reset();
+            ProdOrdComp.SetRange("Prod. Order No.", ProdOrder."No.");
+            ProdOrdComp.SetRange("PMP15 Unsorted Item", true);
+            if ProdOrdComp.FindFirst() then begin
+                UnSORItemNo := ProdOrdComp."Item No.";
+                UnSORItemDesc := ProdOrdComp.Description;
+                UnSORVariantCode := ProdOrdComp."Variant Code";
+            end;
 
             GetSORBinCodes(SORBinCode);
             BinContent.Reset();
-            BinContent.SetAutoCalcFields();
             BinContent.SetRange("Location Code", InvDocHeader."Location Code");
-            BinContent.SetFilter("Bin Code", '%1 | %2 | %3 | %4 | %5 | %6', SORBinCode[1], SORBinCode[2], SORBinCode[3], SORBinCode[4], SORBinCode[5], SORBinCode[6]);
+            BinContent.SetFilter("Bin Code", '%1 | %2 | %3 | %4 | %5 | %6 | %7', SORBinCode[1], SORBinCode[2], SORBinCode[3], SORBinCode[4], SORBinCode[5], SORBinCode[6], SORBinCode[7]);
             if ProdOrder."PMP15 RM Item No." <> '' then
-                BinContent.SetRange("Item No.", ProdOrder."PMP15 RM Item No.");
+                BinContent.SetFilter("Item No.", '%1 | %2', ProdOrder."PMP15 RM Item No.", UnSORItemNo);
             if ProdOrder."PMP15 RM Variant Code" <> '' then
-                BinContent.SetRange("Variant Code", ProdOrder."PMP15 RM Variant Code");
+                BinContent.SetFilter("Variant Code", '%1 | %2', ProdOrder."PMP15 RM Variant Code", UnSORVariantCode);
             BinContent.SetFilter("Lot No. Filter", ProdOrder."PMP15 Lot No.");
+            BinContent.SetAutoCalcFields(Quantity);
             BinContent.SetFilter(Quantity, '> 0');
+            if BinContent.Count > 0 then begin
+                Commit();
+            end else begin
+                InvDocHeader.MarkedOnly(true);
+                InvDocHeader.Delete();
+                exit
+            end;
 
             InvDocLine.Reset();
             InvDocLine.SetRange("Document Type", InvDocLine."Document Type"::Shipment);
@@ -459,7 +542,9 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         exit(Status);
     end;
 
-
+    /// <summary> Validates mandatory input fields before posting a Sortation Production Order. </summary>
+    /// <remarks> This procedure ensures that all <b>critical sortation inputs</b> are properly populated before allowing the creation or posting of a Sortation Production Order. It prevents invalid processing by enforcing quantity validation and verifying that both <b>sorted</b> and <b>unsorted</b> item references are provided. If any required data is missing or invalid, the process is stopped with a clear error message to guide the user toward corrective action. </remarks>
+    /// <param name="SortProdOrdCreation"> Temporary Sortation Production Order Creation record containing user input for quantity, sorted item, unsorted item, and raw material references. </param>
     procedure ValidateInputBeforePosting(var SortProdOrdCreation: Record "PMP15 Sortation PO Creation" temporary)
     begin
         if SortProdOrdCreation.Quantity = 0 then
@@ -476,18 +561,20 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     #endregion SOR CREATION
 
     #region SOR RECORDING
+    /// <summary>Auto-populates related <b>sortation, raw material, lot, weight, and item details</b> when the Sortation Production Order No. is validated.</summary>
     [EventSubscriber(ObjectType::Table, Database::"PMP15 Sortation PO Recording", OnAfterValidateEvent, "Sortation Prod. Order No.", false, false)]
     local procedure PMP15FillValOnLookup_OnAfterValidateEvent_SortationProdOrderNo(var Rec: Record "PMP15 Sortation PO Recording"; var xRec: Record "PMP15 Sortation PO Recording"; CurrFieldNo: Integer)
     var
         ProdOrder: Record "Production Order";
         ProdOrderLine: Record "Prod. Order Line";
         ProdOrderComp: Record "Prod. Order Component";
-        ItemVariant: Record "Item Variant";
+        // ItemVariant: Record "Item Variant";
+        ItemVariantRec: Record "Item Variant";
     begin
         ProdOrder.Reset();
         ProdOrderLine.Reset();
         ProdOrderComp.Reset();
-        ItemVariant.Reset();
+        ItemVariantRec.Reset();
 
         ProdOrder.SetRange("No.", Rec."Sortation Prod. Order No.");
         if ProdOrder.FindFirst() then begin
@@ -495,15 +582,25 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             Rec."RM Item No." := ProdOrder."PMP15 RM Item No.";
             Rec."RM Variant Code" := ProdOrder."PMP15 RM Variant Code";
             Rec."Lot No." := ProdOrder."PMP15 Lot No.";
+
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+            Rec."Tarre Weight" := ProdOrder."PMP15 Tarre Weight (Kg)";
+            Rec."Allowance Packing Weight" := ProdOrder."PMP15 Allowance Packing Weight";
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
         end;
 
         ProdOrderLine.SetRange("Prod. Order No.", Rec."Sortation Prod. Order No.");
         if ProdOrderLine.FindFirst() then begin
             Rec."Sorted Item No." := ProdOrderLine."Item No.";
             Rec."Sorted Variant Code" := ProdOrderLine."Variant Code";
-            ItemVariant.SetRange(Code, Rec."Sorted Variant Code");
-            if ItemVariant.FindFirst() then begin
-                Rec."Submerk 1" := ItemVariant."PMP15 Sub Merk 1";
+
+            Rec."Unit of Measure Code" := ProdOrderLine."Unit of Measure Code";
+            // Rec.Validate("Sorted Variant Code", ProdOrderLine."Variant Code");
+            ItemVariantRec.Reset();
+            ItemVariantRec.SetRange("Item No.", Rec."Sorted Item No.");
+            ItemVariantRec.SetRange(Code, Rec."Sorted Variant Code");
+            if ItemVariantRec.FindFirst() then begin
+                Rec."Submerk 1" := ItemVariantRec."PMP15 Sub Merk 1";
             end;
         end;
 
@@ -515,8 +612,23 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         end;
     end;
 
+    // [EventSubscriber(ObjectType::Table, Database::"PMP15 Sortation PO Recording", OnAfterValidateEvent, "Sorted Variant Code", false, false)]
+    // local procedure PMP15SetValue_OnAfterValidateEvent_SortedVariantCode(var Rec: Record "PMP15 Sortation PO Recording" temporary; var xRec: Record "PMP15 Sortation PO Recording" temporary; CurrFieldNo: Integer)
+    // var
+    //     ItemVariantRec: Record "Item Variant";
+    // begin
+    //     ItemVariantRec.Reset();
+    //     ItemVariantRec.SetRange("Item No.", Rec."Sorted Item No.");
+    //     ItemVariantRec.SetRange(Code, Rec."Sorted Variant Code");
+    //     if ItemVariantRec.FindFirst() then begin
+    //         Message('Dapat submerk 1 = %1', ItemVariantRec."PMP15 Sub Merk 1");
+    //         Rec."Submerk 1" := ItemVariantRec."PMP15 Sub Merk 1";
+    //         Rec.Modify();
+    //     end;
+    // end;
+
     // ASSEMBLY HEADER (ORDER) --> POSTED ASSEMBLY HEADER
-    // Copies the Sortation fields from Assembly Header into the User ID field of Posted Assembly Header before insert.
+    ///<summary>Copies the Sortation fields from Assembly Header into the User ID field of Posted Assembly Header before insert.</summary>
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Assembly-Post", OnPostOnBeforePostedAssemblyHeaderInsert, '', false, false)]
     local procedure PMP15CopyPostingAssemblyHeaderPost_OnPostOnBeforePostedAssemblyHeaderInsert(AssemblyHeader: Record "Assembly Header"; var PostedAssemblyHeader: Record "Posted Assembly Header")
     begin
@@ -529,31 +641,146 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         PostedAssemblyHeader."PMP15 Sub Merk 2" := AssemblyHeader."PMP15 Sub Merk 2";
         PostedAssemblyHeader."PMP15 Sub Merk 3" := AssemblyHeader."PMP15 Sub Merk 3";
         PostedAssemblyHeader."PMP15 Sub Merk 4" := AssemblyHeader."PMP15 Sub Merk 4";
+        PostedAssemblyHeader."PMP15 Sub Merk 5" := AssemblyHeader."PMP15 Sub Merk 5";
         PostedAssemblyHeader."PMP15 L/R" := AssemblyHeader."PMP15 L/R";
         PostedAssemblyHeader."PMP15 Rework" := AssemblyHeader."PMP15 Rework";
+
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        PostedAssemblyHeader."PMP15 Sorted Item No." := AssemblyHeader."PMP15 Sorted Item No.";
+        PostedAssemblyHeader."PMP15 Sorted Variant Code" := AssemblyHeader."PMP15 Sorted Variant Code";
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
     end;
 
-    // ASSEMBLY HEADER (ORDER) --> ITEM JOURNAL LINE
-    // Transfers the Sortation fields from Assembly Header into Item Journal Line after it is created.
+    // ASSEMBLY HEADER (ORDER) --> ITEM JOURNAL LINE (AS OUTPUT)
+    ///<summary>Transfers the Sortation fields from Assembly Header into Item Journal Line after it is created <b>As the Output</b>.</summary>
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Assembly-Post", OnAfterCreateItemJnlLineFromAssemblyHeader, '', false, false)]
-    local procedure PMP15CopyPostAssemblyHeadrtoItemJnlLine_OnAfterCreateItemJnlLineFromAssemblyHeader(var ItemJournalLine: Record "Item Journal Line"; AssemblyHeader: Record "Assembly Header")
+    local procedure PMP15CopyPostatAssemblyHeadrtoItemJnlLine_OnAfterCreateItemJnlLineFromAssemblyHeader(var ItemJournalLine: Record "Item Journal Line"; AssemblyHeader: Record "Assembly Header")
+    var
+        LotNoInfoRec: Record "Lot No. Information";
+        ProdOrderRec: Record "Production Order";
     begin
-        ItemJournalLine."PMP15 Prod. Order No." := AssemblyHeader."PMP15 Prod. Order No.";
-        ItemJournalLine."PMP15 Production Type" := AssemblyHeader."PMP15 Production Type";
-        ItemJournalLine."PMP15 SOR Step" := AssemblyHeader."PMP15 SOR Step";
-        ItemJournalLine."PMP15 SOR Step Code" := AssemblyHeader."PMP15 SOR Step Code";
-        ItemJournalLine."PMP15 Tobacco Type" := AssemblyHeader."PMP15 Tobacco Type";
-        ItemJournalLine."PMP15 Sub Merk 1" := AssemblyHeader."PMP15 Sub Merk 1";
-        ItemJournalLine."PMP15 Sub Merk 2" := AssemblyHeader."PMP15 Sub Merk 2";
-        ItemJournalLine."PMP15 Sub Merk 3" := AssemblyHeader."PMP15 Sub Merk 3";
-        ItemJournalLine."PMP15 Sub Merk 4" := AssemblyHeader."PMP15 Sub Merk 4";
-        ItemJournalLine."PMP15 Sub Merk 5" := AssemblyHeader."PMP15 Sub Merk 5";
-        ItemJournalLine."PMP15 L/R" := AssemblyHeader."PMP15 L/R";
-        ItemJournalLine."PMP15 Rework" := AssemblyHeader."PMP15 Rework";
+        LotNoInfoRec.Reset();
+        ProdOrderRec.Reset();
+
+        ProdOrderRec.SetRange(Status, ProdOrderRec.Status::Released);
+        ProdOrderRec.SetRange("No.", AssemblyHeader."PMP15 Prod. Order No.");
+        if ProdOrderRec.FindFirst() then begin
+            ItemJournalLine."PMP15 Prod. Order No." := AssemblyHeader."PMP15 Prod. Order No.";
+            ItemJournalLine."PMP15 Production Type" := AssemblyHeader."PMP15 Production Type";
+            ItemJournalLine."PMP15 SOR Step" := AssemblyHeader."PMP15 SOR Step";
+            ItemJournalLine."PMP15 SOR Step Code" := AssemblyHeader."PMP15 SOR Step Code";
+            ItemJournalLine."PMP15 Tobacco Type" := AssemblyHeader."PMP15 Tobacco Type";
+            ItemJournalLine."PMP15 Sub Merk 1" := AssemblyHeader."PMP15 Sub Merk 1";
+            ItemJournalLine."PMP15 Sub Merk 2" := AssemblyHeader."PMP15 Sub Merk 2";
+            ItemJournalLine."PMP15 Sub Merk 3" := AssemblyHeader."PMP15 Sub Merk 3";
+            ItemJournalLine."PMP15 Sub Merk 4" := AssemblyHeader."PMP15 Sub Merk 4";
+            ItemJournalLine."PMP15 Sub Merk 5" := AssemblyHeader."PMP15 Sub Merk 5";
+            ItemJournalLine."PMP15 L/R" := AssemblyHeader."PMP15 L/R";
+            ItemJournalLine."PMP15 Rework" := AssemblyHeader."PMP15 Rework";
+
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+            ItemJournalLine."PMP15 Marked" := true;
+            if LotNoInfoRec.Get(ProdOrderRec."PMP15 RM Item No.", ProdOrderRec."PMP15 RM Variant Code", AssemblyHeader."PMP15 Lot No.") then begin
+                ItemJournalLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                ItemJournalLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                ItemJournalLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                ItemJournalLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                ItemJournalLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                ItemJournalLine."PMP15 Output Item No." := AssemblyHeader."PMP15 Sorted Item No.";
+                ItemJournalLine."PMP15 Output Variant Code" := AssemblyHeader."PMP15 Sorted Variant Code";
+            end;
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        end;
+    end;
+
+    // ASSEMBLY Line (ORDER) --> ITEM JOURNAL LINE (AS CONSUMPTION)
+    ///<summary>Transfers the Sortation fields from Assembly Line into Item Journal Line after it is created <b>As the Consumption</b> for the Item type.</summary>
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Assembly-Post", OnBeforePostItemConsumption, '', false, false)]
+    local procedure PMP15CopyPostatAssemblyHeadrtoItemJnlLine_OnBeforePostItemConsumption(var AssemblyHeader: Record "Assembly Header"; var AssemblyLine: Record "Assembly Line"; var ItemJournalLine: Record "Item Journal Line")
+    var
+        LotNoInfoRec: Record "Lot No. Information";
+        ProdOrderRec: Record "Production Order";
+    begin
+        ProdOrderRec.SetRange(Status, ProdOrderRec.Status::Released);
+        ProdOrderRec.SetRange("No.", AssemblyHeader."PMP15 Prod. Order No.");
+        if ProdOrderRec.FindFirst() then begin
+            ItemJournalLine."PMP15 Prod. Order No." := AssemblyHeader."PMP15 Prod. Order No.";
+            ItemJournalLine."PMP15 Production Type" := AssemblyHeader."PMP15 Production Type";
+            ItemJournalLine."PMP15 SOR Step" := AssemblyHeader."PMP15 SOR Step";
+            ItemJournalLine."PMP15 SOR Step Code" := AssemblyHeader."PMP15 SOR Step Code";
+            ItemJournalLine."PMP15 Tobacco Type" := AssemblyHeader."PMP15 Tobacco Type";
+            ItemJournalLine."PMP15 Sub Merk 1" := AssemblyHeader."PMP15 Sub Merk 1";
+            ItemJournalLine."PMP15 Sub Merk 2" := AssemblyHeader."PMP15 Sub Merk 2";
+            ItemJournalLine."PMP15 Sub Merk 3" := AssemblyHeader."PMP15 Sub Merk 3";
+            ItemJournalLine."PMP15 Sub Merk 4" := AssemblyHeader."PMP15 Sub Merk 4";
+            ItemJournalLine."PMP15 Sub Merk 5" := AssemblyHeader."PMP15 Sub Merk 5";
+            ItemJournalLine."PMP15 L/R" := AssemblyHeader."PMP15 L/R";
+            ItemJournalLine."PMP15 Rework" := AssemblyHeader."PMP15 Rework";
+
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+            ItemJournalLine."PMP15 Marked" := true;
+            if LotNoInfoRec.Get(ItemJournalLine."Item No.", ItemJournalLine."Variant Code", AssemblyHeader."PMP15 Lot No.") then begin
+                ItemJournalLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                ItemJournalLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                ItemJournalLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                ItemJournalLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                ItemJournalLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                ItemJournalLine."PMP15 Output Item No." := AssemblyHeader."PMP15 Sorted Item No.";
+                ItemJournalLine."PMP15 Output Variant Code" := AssemblyHeader."PMP15 Sorted Variant Code";
+            end;
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        end;
+    end;
+
+    // ASSEMBLY Line (ORDER) --> ITEM JOURNAL LINE (AS CONSUMPTION)
+    ///<summary>Transfers the Sortation fields from Assembly Line into Item Journal Line after it is created <b>As the Consumption</b> for the Resource type.</summary>
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Assembly-Post", OnAfterCreateItemJnlLineFromAssemblyLine, '', false, false)]
+    local procedure PMP15CopyPostatAssemblyHeadrtoItemJnlLine_OnAfterCreateItemJnlLineFromAssemblyLine(var ItemJournalLine: Record "Item Journal Line"; AssemblyLine: Record "Assembly Line")
+    var
+        LotNoInfoRec: Record "Lot No. Information";
+        ProdOrderRec: Record "Production Order";
+        AssemblyHeader: Record "Assembly Header";
+    begin
+        ProdOrderRec.Reset();
+        AssemblyHeader.Reset();
+
+        AssemblyHeader.SetRange("Document Type", AssemblyHeader."Document Type"::Order);
+        AssemblyHeader.SetRange("No.", AssemblyLine."Document No.");
+        if not AssemblyHeader.FindFirst() then exit;
+
+        ProdOrderRec.SetRange(Status, ProdOrderRec.Status::Released);
+        ProdOrderRec.SetRange("No.", AssemblyHeader."PMP15 Prod. Order No.");
+        if ProdOrderRec.FindFirst() then begin
+            ItemJournalLine."PMP15 Prod. Order No." := AssemblyHeader."PMP15 Prod. Order No.";
+            ItemJournalLine."PMP15 Production Type" := AssemblyHeader."PMP15 Production Type";
+            ItemJournalLine."PMP15 SOR Step" := AssemblyHeader."PMP15 SOR Step";
+            ItemJournalLine."PMP15 SOR Step Code" := AssemblyHeader."PMP15 SOR Step Code";
+            ItemJournalLine."PMP15 Tobacco Type" := AssemblyHeader."PMP15 Tobacco Type";
+            ItemJournalLine."PMP15 Sub Merk 1" := AssemblyHeader."PMP15 Sub Merk 1";
+            ItemJournalLine."PMP15 Sub Merk 2" := AssemblyHeader."PMP15 Sub Merk 2";
+            ItemJournalLine."PMP15 Sub Merk 3" := AssemblyHeader."PMP15 Sub Merk 3";
+            ItemJournalLine."PMP15 Sub Merk 4" := AssemblyHeader."PMP15 Sub Merk 4";
+            ItemJournalLine."PMP15 Sub Merk 5" := AssemblyHeader."PMP15 Sub Merk 5";
+            ItemJournalLine."PMP15 L/R" := AssemblyHeader."PMP15 L/R";
+            ItemJournalLine."PMP15 Rework" := AssemblyHeader."PMP15 Rework";
+
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+            ItemJournalLine."PMP15 Marked" := true;
+            if LotNoInfoRec.Get(ItemJournalLine."Item No.", ItemJournalLine."Variant Code", AssemblyHeader."PMP15 Lot No.") then begin
+                ItemJournalLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                ItemJournalLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                ItemJournalLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                ItemJournalLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                ItemJournalLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                ItemJournalLine."PMP15 Output Item No." := AssemblyHeader."PMP15 Sorted Item No.";
+                ItemJournalLine."PMP15 Output Variant Code" := AssemblyHeader."PMP15 Sorted Variant Code";
+            end;
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        end;
     end;
 
     // ITEM JOURNAL LINE --> ITEM LEDGER ENTRY (ILE)
-    // Copies the Sortation fields from Item Journal Line into Item Ledger Entry after initialization.
+    ///<summary>Copies the Sortation fields from Item Journal Line into Item Ledger Entry after initialization.</summary>
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Item Jnl.-Post Line", OnAfterInitItemLedgEntry, '', false, false)]
     local procedure PMP15CopyItemJnlLinetoILE_OnAfterInitItemLedgEntry(var ItemJournalLine: Record "Item Journal Line"; var NewItemLedgEntry: Record "Item Ledger Entry"; var ItemLedgEntryNo: Integer)
     begin
@@ -572,32 +799,64 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         NewItemLedgEntry."PMP15 Sub Merk 5" := ItemJournalLine."PMP15 Sub Merk 5";
         NewItemLedgEntry."PMP15 L/R" := ItemJournalLine."PMP15 L/R";
         NewItemLedgEntry."PMP15 Rework" := ItemJournalLine."PMP15 Rework";
+
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        NewItemLedgEntry."PMP15 Variant Changes (From)" := ItemJournalLine."PMP15 Variant Changes (From)";
+        NewItemLedgEntry."PMP15 Variant Changes (To)" := ItemJournalLine."PMP15 Variant Changes (To)";
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
     end;
 
     // ITEM JOURNAL LINE --> WAREHOUSE JOURNAL LINE to WAREHOUSE ENTRY right after posting ILE.
-    // Copies the Sortations fields from Item Journal Line into Warehouse Journal Line after initialization.
+    ///<summary>Copies the Sortations fields from Item Journal Line into Warehouse Journal Line after initialization.</summary>
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"WMS Management", OnInitWhseJnlLineCopyFromItemJnlLine, '', false, false)]
     local procedure PMP15CopyItemJnlLinetoWhsJnlLine_OnInitWhseJnlLineCopyFromItemJnlLine(var WarehouseJournalLine: Record "Warehouse Journal Line"; ItemJournalLine: Record "Item Journal Line")
+    var
+        BinRec: Record Bin;
     begin
-        WarehouseJournalLine."PMP15 Prod. Order No." := ItemJournalLine."PMP15 Prod. Order No.";
-        WarehouseJournalLine."PMP15 Production Type" := ItemJournalLine."PMP15 Production Type";
-        WarehouseJournalLine."PMP15 SOR Step" := ItemJournalLine."PMP15 SOR Step";
-        WarehouseJournalLine."PMP15 SOR Step Code" := ItemJournalLine."PMP15 SOR Step Code";
-        WarehouseJournalLine."PMP15 Return" := ItemJournalLine."PMP15 Return";
-        WarehouseJournalLine."PMP15 Return to Result Step" := ItemJournalLine."PMP15 Return to Result Step";
-        WarehouseJournalLine."PMP15 Return to Result Code" := ItemJournalLine."PMP15 Return to Result Code";
-        WarehouseJournalLine."PMP15 Tobacco Type" := ItemJournalLine."PMP15 Tobacco Type";
-        WarehouseJournalLine."PMP15 Sub Merk 1" := ItemJournalLine."PMP15 Sub Merk 1";
-        WarehouseJournalLine."PMP15 Sub Merk 2" := ItemJournalLine."PMP15 Sub Merk 2";
-        WarehouseJournalLine."PMP15 Sub Merk 3" := ItemJournalLine."PMP15 Sub Merk 3";
-        WarehouseJournalLine."PMP15 Sub Merk 4" := ItemJournalLine."PMP15 Sub Merk 4";
-        WarehouseJournalLine."PMP15 Sub Merk 5" := ItemJournalLine."PMP15 Sub Merk 5";
-        WarehouseJournalLine."PMP15 L/R" := ItemJournalLine."PMP15 L/R";
-        WarehouseJournalLine."PMP15 Rework" := ItemJournalLine."PMP15 Rework";
+        if ItemJournalLine."PMP15 Marked" then begin
+            BinRec.Reset();
+            WarehouseJournalLine."PMP15 Prod. Order No." := ItemJournalLine."PMP15 Prod. Order No.";
+            WarehouseJournalLine."PMP15 Production Type" := ItemJournalLine."PMP15 Production Type";
+            WarehouseJournalLine."PMP15 SOR Step" := ItemJournalLine."PMP15 SOR Step";
+            WarehouseJournalLine."PMP15 SOR Step Code" := ItemJournalLine."PMP15 SOR Step Code";
+            WarehouseJournalLine."PMP15 Return" := ItemJournalLine."PMP15 Return";
+            WarehouseJournalLine."PMP15 Return to Result Step" := ItemJournalLine."PMP15 Return to Result Step";
+            WarehouseJournalLine."PMP15 Return to Result Code" := ItemJournalLine."PMP15 Return to Result Code";
+            WarehouseJournalLine."PMP15 Tobacco Type" := ItemJournalLine."PMP15 Tobacco Type";
+            WarehouseJournalLine."PMP15 Sub Merk 1" := ItemJournalLine."PMP15 Sub Merk 1";
+            WarehouseJournalLine."PMP15 Sub Merk 2" := ItemJournalLine."PMP15 Sub Merk 2";
+            WarehouseJournalLine."PMP15 Sub Merk 3" := ItemJournalLine."PMP15 Sub Merk 3";
+            WarehouseJournalLine."PMP15 Sub Merk 4" := ItemJournalLine."PMP15 Sub Merk 4";
+            WarehouseJournalLine."PMP15 Sub Merk 5" := ItemJournalLine."PMP15 Sub Merk 5";
+            WarehouseJournalLine."PMP15 L/R" := ItemJournalLine."PMP15 L/R";
+            WarehouseJournalLine."PMP15 Rework" := ItemJournalLine."PMP15 Rework";
+
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+            WarehouseJournalLine."PMP15 Variant Changes (From)" := ItemJournalLine."PMP15 Variant Changes (From)";
+            WarehouseJournalLine."PMP15 Variant Changes (To)" := ItemJournalLine."PMP15 Variant Changes (To)";
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+            WarehouseJournalLine."PMP15 Crop" := ItemJournalLine."PMP15 Crop";
+            WarehouseJournalLine."PMP15 Cycle (Separately)" := ItemJournalLine."PMP15 Cycle (Separately)";
+            WarehouseJournalLine."PMP15 Invoice No." := ItemJournalLine."Invoice No.";
+            WarehouseJournalLine."PMP15 Delivery" := ItemJournalLine."PMP15 Delivery";
+            WarehouseJournalLine."PMP15 Cycle Code" := ItemJournalLine."PMP15 Cycle Code";
+            WarehouseJournalLine."PMP15 Output Item No." := ItemJournalLine."PMP15 Output Item No.";
+            WarehouseJournalLine."PMP15 Output Variant Code" := ItemJournalLine."PMP15 Output Variant Code";
+
+            // WarehouseJournalLine."PMP15 Bin SOR Step" := ItemJournalLine."PMP15 Bin SOR Step";
+            BinRec.SetRange("Location Code", WarehouseJournalLine."Location Code");
+            BinRec.SetRange(Code, WarehouseJournalLine."Bin Code");
+            if BinRec.FindFirst() then begin
+                WarehouseJournalLine."PMP15 Bin SOR Step" := BinRec."PMP15 Bin Type";
+            end;
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        end;
     end;
 
     // WAREHOUSE JOURNAL LINE --> WAREHOUSE ENTRY
-    // Copies the Sortations fields from Warehouse Journal Line into Warehouse Entry after insert.
+    ///<summary>Copies the Sortations fields from Warehouse Journal Line into Warehouse Entry after insert.</summary>
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Whse. Jnl.-Register Line", OnAfterInsertWhseEntry, '', false, false)]
     local procedure PMP18CopyWhseJnlLinetoWE_OnAfterInsertWhseEntry(var WarehouseEntry: Record "Warehouse Entry"; var WarehouseJournalLine: Record "Warehouse Journal Line")
     begin
@@ -616,13 +875,34 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         WarehouseEntry."PMP15 Sub Merk 5" := WarehouseJournalLine."PMP15 Sub Merk 5";
         WarehouseEntry."PMP15 L/R" := WarehouseJournalLine."PMP15 L/R";
         WarehouseEntry."PMP15 Rework" := WarehouseJournalLine."PMP15 Rework";
+
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        WarehouseEntry."PMP15 Variant Changes (From)" := WarehouseJournalLine."PMP15 Variant Changes (From)";
+        WarehouseEntry."PMP15 Variant Changes (To)" := WarehouseJournalLine."PMP15 Variant Changes (To)";
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        WarehouseEntry."PMP15 Crop" := WarehouseJournalLine."PMP15 Crop";
+        WarehouseEntry."PMP15 Cycle (Separately)" := WarehouseJournalLine."PMP15 Cycle (Separately)";
+        WarehouseEntry."PMP15 Invoice No." := WarehouseJournalLine."PMP15 Invoice No.";
+        WarehouseEntry."PMP15 Delivery" := WarehouseJournalLine."PMP15 Delivery";
+        WarehouseEntry."PMP15 Cycle Code" := WarehouseJournalLine."PMP15 Cycle Code";
+        WarehouseEntry."PMP15 Output Item No." := WarehouseJournalLine."PMP15 Output Item No.";
+        WarehouseEntry."PMP15 Output Variant Code" := WarehouseJournalLine."PMP15 Output Variant Code";
+        WarehouseEntry."PMP15 Bin SOR Step" := WarehouseJournalLine."PMP15 Bin SOR Step";
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
         WarehouseEntry.Modify();
     end;
 
     // ITEM JOURNAL LINE --> WAREHOUSE JOURNAL LINE (ITEM JOURNAL POSTING)
+    /// <summary>Copies <b>PMP15 production, rework, variant change, and traceability fields</b> from the Item Journal Line to the Warehouse Journal Line after creation.</summary>
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"WMS Management", OnAfterCreateWhseJnlLine, '', false, false)]
     local procedure PMP15CopyWhseJnlLinefromItemJnlLine_OnAfterCreateWhseJnlLine(var WhseJournalLine: Record "Warehouse Journal Line"; ItemJournalLine: Record "Item Journal Line"; ToTransfer: Boolean)
+    var
+        BinRec: Record Bin;
     begin
+        BinRec.Reset();
+
         WhseJournalLine."PMP15 Prod. Order No." := ItemJournalLine."PMP15 Prod. Order No.";
         WhseJournalLine."PMP15 Production Type" := ItemJournalLine."PMP15 Production Type";
         WhseJournalLine."PMP15 Sub Merk 1" := ItemJournalLine."PMP15 Sub Merk 1";
@@ -638,9 +918,26 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         WhseJournalLine."PMP15 SOR Step Code" := ItemJournalLine."PMP15 SOR Step Code";
         WhseJournalLine."PMP15 Tobacco Type" := ItemJournalLine."PMP15 Tobacco Type";
         WhseJournalLine."PMP15 Rework" := ItemJournalLine."PMP15 Rework";
+
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        WhseJournalLine."PMP15 Variant Changes (From)" := ItemJournalLine."PMP15 Variant Changes (From)";
+        WhseJournalLine."PMP15 Variant Changes (To)" := ItemJournalLine."PMP15 Variant Changes (To)";
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        WhseJournalLine."PMP15 Crop" := ItemJournalLine."PMP15 Crop";
+        WhseJournalLine."PMP15 Cycle (Separately)" := ItemJournalLine."PMP15 Cycle (Separately)";
+        WhseJournalLine."PMP15 Invoice No." := ItemJournalLine."Invoice No.";
+        WhseJournalLine."PMP15 Delivery" := ItemJournalLine."PMP15 Delivery";
+        WhseJournalLine."PMP15 Cycle Code" := ItemJournalLine."PMP15 Cycle Code";
+        WhseJournalLine."PMP15 Output Item No." := ItemJournalLine."PMP15 Output Item No.";
+        WhseJournalLine."PMP15 Output Variant Code" := ItemJournalLine."PMP15 Output Variant Code";
+        WhseJournalLine."PMP15 Bin SOR Step" := ItemJournalLine."PMP15 Bin SOR Step";
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
     end;
 
     // WAREHOUSE JOURNAL LINE --> WAREHOUSE ENTRY (ITEM JOURNAL POSTING)
+    /// <summary>Initializes the Warehouse Entry by copying <b>PMP15 production, rework, variant change, and traceability fields</b> from the Warehouse Journal Line during warehouse entry creation.</summary>
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Whse. Jnl.-Register Line", OnInitWhseEntryCopyFromWhseJnlLine, '', false, false)]
     local procedure PMP15SetWhseEntryfromWhseJnlLine_OnInitWhseEntryCopyFromWhseJnlLine(var WarehouseEntry: Record "Warehouse Entry"; var WarehouseJournalLine: Record "Warehouse Journal Line"; OnMovement: Boolean; Sign: Integer; Location: Record Location; BinCode: Code[20]; var IsHandled: Boolean)
     begin
@@ -659,9 +956,26 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         WarehouseEntry."PMP15 SOR Step Code" := WarehouseJournalLine."PMP15 SOR Step Code";
         WarehouseEntry."PMP15 Tobacco Type" := WarehouseJournalLine."PMP15 Tobacco Type";
         WarehouseEntry."PMP15 Rework" := WarehouseJournalLine."PMP15 Rework";
+
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        WarehouseEntry."PMP15 Variant Changes (From)" := WarehouseJournalLine."PMP15 Variant Changes (From)";
+        WarehouseEntry."PMP15 Variant Changes (To)" := WarehouseJournalLine."PMP15 Variant Changes (To)";
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINSIH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        WarehouseEntry."PMP15 Crop" := WarehouseJournalLine."PMP15 Crop";
+        WarehouseEntry."PMP15 Cycle (Separately)" := WarehouseJournalLine."PMP15 Cycle (Separately)";
+        WarehouseEntry."PMP15 Invoice No." := WarehouseJournalLine."PMP15 Invoice No.";
+        WarehouseEntry."PMP15 Delivery" := WarehouseJournalLine."PMP15 Delivery";
+        WarehouseEntry."PMP15 Cycle Code" := WarehouseJournalLine."PMP15 Cycle Code";
+        WarehouseEntry."PMP15 Output Item No." := WarehouseJournalLine."PMP15 Output Item No.";
+        WarehouseEntry."PMP15 Output Variant Code" := WarehouseJournalLine."PMP15 Output Variant Code";
+        WarehouseEntry."PMP15 Bin SOR Step" := WarehouseJournalLine."PMP15 Bin SOR Step";
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
     end;
 
     // ITEM JOURNAL LINE --> ITEM LEDGER ENTRY (ITEM JOURNAL POSTING)
+    /// <summary>Copies <b>PMP15 production, rework, and variant change traceability fields</b> from the Item Journal Line to the newly created Item Ledger Entry after initialization.</summary>
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Item Jnl.-Post Line", OnAfterInitItemLedgEntry, '', false, false)]
     local procedure PMP15SetItemLedEntryfromItemJnlLine_OnAfterInitItemLedgEntry(var NewItemLedgEntry: Record "Item Ledger Entry"; var ItemJournalLine: Record "Item Journal Line"; var ItemLedgEntryNo: Integer)
     begin
@@ -680,6 +994,11 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         NewItemLedgEntry."PMP15 SOR Step Code" := ItemJournalLine."PMP15 SOR Step Code";
         NewItemLedgEntry."PMP15 Tobacco Type" := ItemJournalLine."PMP15 Tobacco Type";
         NewItemLedgEntry."PMP15 Rework" := ItemJournalLine."PMP15 Rework";
+
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        NewItemLedgEntry."PMP15 Variant Changes (From)" := ItemJournalLine."PMP15 Variant Changes (From)";
+        NewItemLedgEntry."PMP15 Variant Changes (To)" := ItemJournalLine."PMP15 Variant Changes (To)";
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
     end;
 
     /// <summary>Creates an Assembly Header document based on Sortation Order Recording data.</summary>
@@ -690,9 +1009,11 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     /// <param name="SORStep_Step">The Sortation Step Enum value applied to the Assembly Header.</param>
     procedure CreateAssemblyHeadfromSORRecording(var AssemblyHeader: Record "Assembly Header"; var ProdOrder: Record "Production Order"; SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary; SORStep_Step: Enum "PMP15 Sortation Step Enum")
     var
+        LotNoInfo: Record "Lot No. Information";
         SORStepEnum: Enum "PMP15 Sortation Step Enum";
         SORStepCode: Code[20];
     begin
+        LotNoInfo.Reset();
         ExtCompanySetup.Get();
         // 
         AssemblyHeader.Init();
@@ -700,16 +1021,30 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         AssemblyHeader."No." := NoSeriesMgmt.GetNextNo(ExtCompanySetup."PMP15 SOR Assembly Order Nos", WorkDate());
         AssemblyHeader.Validate("No. Series", ExtCompanySetup."PMP15 SOR Assembly Order Nos");
         AssemblyHeader.Validate("Posting No. Series", ExtCompanySetup."PMP15 SOR Pstd-Asmbly Ord. Nos");
-        AssemblyHeader."Posting Date" := WorkDate();
-        AssemblyHeader.Validate("Due Date", WorkDate());
-        AssemblyHeader.Validate("Starting Date", WorkDate());
-        AssemblyHeader.Validate("Ending Date", WorkDate());
-        AssemblyHeader."Last Date Modified" := WorkDate();
+
+        AssemblyHeader.InitRecord();
+
+        // AssemblyHeader."Creation Date" := WorkDate();
+        // if AssemblyHeader."Due Date" = 0D then
+        //     AssemblyHeader."Due Date" := WorkDate();
+        // AssemblyHeader."Posting Date" := WorkDate();
+        // if AssemblyHeader."Starting Date" = 0D then
+        //     AssemblyHeader."Starting Date" := WorkDate();
+        // if AssemblyHeader."Ending Date" = 0D then
+        //     AssemblyHeader."Ending Date" := WorkDate();
+        // AssemblyHeader."Posting Date" := WorkDate();
+        // AssemblyHeader."Due Date" := WorkDate();
+        // AssemblyHeader."Ending Date" := WorkDate() - 1;
+        // AssemblyHeader."Starting Date" := WorkDate() - 2;
+        // AssemblyHeader.Validate("Posting Date", WorkDate());
+        // AssemblyHeader.Validate("Due Date", WorkDate());
+
         AssemblyHeader.Validate("Item No.", SortProdOrderRec."Unsorted Item No.");
         AssemblyHeader.Validate("Variant Code", SortProdOrderRec."Unsorted Variant Code");
         AssemblyHeader.Validate("Location Code", SortProdOrderRec."Location Code");
         AssemblyHeader.Validate("Bin Code", SortProdOrderRec."To Bin Code");
-        AssemblyHeader.Validate(Quantity, SortProdOrderRec.Quantity);
+        // AssemblyHeader.Validate(Quantity, SortProdOrderRec.Quantity);
+        AssemblyHeader.Quantity := SortProdOrderRec.Quantity;
         AssemblyHeader.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
         AssemblyHeader."PMP15 Prod. Order No." := SortProdOrderRec."Sortation Prod. Order No.";
         AssemblyHeader."PMP15 Production Type" := AssemblyHeader."PMP15 Production Type"::"SOR-Sortation";
@@ -724,6 +1059,25 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         AssemblyHeader."PMP15 Sub Merk 5" := SortProdOrderRec."Submerk 5";
         AssemblyHeader."PMP15 L/R" := SortProdOrderRec."L/R";
         AssemblyHeader."PMP15 Rework" := SortProdOrderRec.Rework;
+
+
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        AssemblyHeader."PMP15 Sorted Item No." := SortProdOrderRec."Sorted Item No.";
+        AssemblyHeader."PMP15 Sorted Variant Code" := SortProdOrderRec."Sorted Variant Code";
+        if LotNoInformationIsExist(LotNoInfo, AssemblyHeader."Item No.", AssemblyHeader."Variant Code", SortProdOrderRec."Lot No.") then begin
+            AssemblyHeader."PMP15 Lot No." := LotNoInfo."Lot No.";
+        end else begin
+            AssemblyHeader."PMP15 Lot No." := SortProdOrderRec."Lot No.";
+            LotNoInfo.SetRange("Item No.", SortProdOrderRec."RM Item No.");
+            LotNoInfo.SetRange("Variant Code", SortProdOrderRec."RM Variant Code");
+            LotNoInfo.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+            if LotNoInfo.FindFirst() then begin
+                CreateNewLotNoInformationfromOldLotNoInfo(LotNoInfo, AssemblyHeader."Item No.", AssemblyHeader."Variant Code", SortProdOrderRec."Lot No.");
+            end else begin
+                Error('No Lot No. Information available for receiving the Assembly Order output for Raw Material %1 - %2 during the creation of a new Lot No %3. Information record. Please review the current lot availability for the specified raw material.', SortProdOrderRec."RM Item No.", SortProdOrderRec."RM Variant Code", SortProdOrderRec."Lot No.");
+            end;
+        end;
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
         AssemblyHeader.Insert();
     end;
 
@@ -810,14 +1164,14 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             until ItemLedgEntry.Next() = 0;
     end;
 
-    // Creates or updates entry summary records based on the provided tracking specification and reservation entry.
+    ///<summary>Creates or updates entry summary records based on the provided tracking specification and reservation entry.</summary>
     local procedure CreateEntrySummary(TrackingSpecification: Record "Tracking Specification" temporary; TempReservEntry: Record "Reservation Entry" temporary)
     begin
         CreateEntrySummary2(TrackingSpecification, TempReservEntry, true);
         CreateEntrySummary2(TrackingSpecification, TempReservEntry, false);
     end;
 
-    // Updates the bin content quantity in the entry summary based on related warehouse entries.
+    ///<summary>Updates the bin content quantity in the entry summary based on related warehouse entries.</summary>
     local procedure UpdateBinContent(var TempEntrySummary: Record "Entry Summary" temporary)
     var
         WarehouseEntry: Record "Warehouse Entry";
@@ -846,7 +1200,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         TempEntrySummary."Bin Content" := WarehouseEntry."Qty. (Base)";
     end;
 
-    // Builds or aggregates entry summary data for serial or non-serial tracked items derived from reservation entry details.
+    ///<summary>Builds or aggregates entry summary data for serial or non-serial tracked items derived from reservation entry details.</summary>
     local procedure CreateEntrySummary2(TempTrackingSpecification: Record "Tracking Specification" temporary; TempReservEntry: Record "Reservation Entry" temporary; SerialNoLookup: Boolean)
     var
         LateBindingManagement: Codeunit "Late Binding Management";
@@ -924,7 +1278,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             TempGlobalEntrySummary.Modify();
     end;
 
-    // Collects tracking source data from item ledger and reservation entries to initialize temporary tracking structures.
+    ///<summary>Collects tracking source data from item ledger and reservation entries to initialize temporary tracking structures.</summary>
     local procedure RetrieveLookupData(var TempTrackingSpecification: Record "Tracking Specification" temporary; FullDataSet: Boolean)
     var
         ItemLedgEntry: Record "Item Ledger Entry";
@@ -989,45 +1343,54 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         RecRef.GetTable(Item);
         if Item."Item Tracking Code" = '' then
             PMPAppLogicMgmt.ErrorRecordRefwithAction(RecRef, Item.FieldNo(Description), Page::"Item Card", 'Empty Field', StrSubstNo('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', AssemblyHeader."Item No."));
+        GetItemTrackingCode(Item."No.");
 
         AssemblyHeaderReserve.InitFromAsmHeader(TempTrackingSpecification, AssemblyHeader);
         TempTrackingSpecification.Insert();
 
         RetrieveLookupData(TempTrackingSpecification, true);
         TempTrackingSpecification.Delete();
+
+        AssemblyHeaderReserve.InitFromAsmHeader(SourceTrackingSpecification, AssemblyHeader);
+        SourceTrackingSpecification."Bin Code" := AssemblyHeader."Bin Code";
+        ItemTrackingLine.SetSourceSpec(SourceTrackingSpecification, 0D);
+
+        TempTrackingSpecification.Init;
+        TempTrackingSpecification.TransferFields(SourceTrackingSpecification);
+        TempTrackingSpecification.SetItemData(SourceTrackingSpecification."Item No.", SourceTrackingSpecification.Description, SourceTrackingSpecification."Location Code", SourceTrackingSpecification."Variant Code", SourceTrackingSpecification."Bin Code", SourceTrackingSpecification."Qty. per Unit of Measure");
+        TempTrackingSpecification.Validate("Item No.", SourceTrackingSpecification."Item No.");
+        TempTrackingSpecification.Validate("Location Code", SourceTrackingSpecification."Location Code");
+        TempTrackingSpecification.Validate("Creation Date", DT2Date(TypeHelper.GetCurrentDateTimeInUserTimeZone()));
+        TempTrackingSpecification.Validate("Source Type", SourceTrackingSpecification."Source Type");
+        TempTrackingSpecification.Validate("Source Subtype", SourceTrackingSpecification."Source Subtype");
+        TempTrackingSpecification.Validate("Source ID", SourceTrackingSpecification."Source ID");
+        TempTrackingSpecification.Validate("Source Batch Name", SourceTrackingSpecification."Source Batch Name");
+        TempTrackingSpecification.Validate("Source Prod. Order Line", SourceTrackingSpecification."Source Prod. Order Line");
+        TempTrackingSpecification.Validate("Source Ref. No.", SourceTrackingSpecification."Source Ref. No.");
+
         TempGlobalEntrySummary.Reset();
-        TempGlobalEntrySummary.SetRange("Lot No.", SortProdOrderRec."Lot No.");
-        TempGlobalEntrySummary.SetRange("Package No.", SortProdOrderRec."Package No.");
+        if ItemTrackingCode."Lot Specific Tracking" then
+            TempGlobalEntrySummary.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+        if ItemTrackingCode."Package Specific Tracking" then
+            TempGlobalEntrySummary.SetRange("Package No.", SortProdOrderRec."Package No.");
         if TempGlobalEntrySummary.FindSet() then begin
-            AssemblyHeaderReserve.InitFromAsmHeader(SourceTrackingSpecification, AssemblyHeader);
-            SourceTrackingSpecification."Bin Code" := AssemblyHeader."Bin Code";
-            ItemTrackingLine.SetSourceSpec(SourceTrackingSpecification, 0D);
-
-            TempTrackingSpecification.Init;
-            TempTrackingSpecification.TransferFields(SourceTrackingSpecification);
-            TempTrackingSpecification.SetItemData(SourceTrackingSpecification."Item No.", SourceTrackingSpecification.Description, SourceTrackingSpecification."Location Code", SourceTrackingSpecification."Variant Code", SourceTrackingSpecification."Bin Code", SourceTrackingSpecification."Qty. per Unit of Measure");
-            TempTrackingSpecification.Validate("Item No.", SourceTrackingSpecification."Item No.");
-            TempTrackingSpecification.Validate("Location Code", SourceTrackingSpecification."Location Code");
-            TempTrackingSpecification.Validate("Creation Date", DT2Date(TypeHelper.GetCurrentDateTimeInUserTimeZone()));
-            TempTrackingSpecification.Validate("Source Type", SourceTrackingSpecification."Source Type");
-            TempTrackingSpecification.Validate("Source Subtype", SourceTrackingSpecification."Source Subtype");
-            TempTrackingSpecification.Validate("Source ID", SourceTrackingSpecification."Source ID");
-            TempTrackingSpecification.Validate("Source Batch Name", SourceTrackingSpecification."Source Batch Name");
-            TempTrackingSpecification.Validate("Source Prod. Order Line", SourceTrackingSpecification."Source Prod. Order Line");
-            TempTrackingSpecification.Validate("Source Ref. No.", SourceTrackingSpecification."Source Ref. No.");
-
-            if TempGlobalEntrySummary."Serial No." <> '' then
+            if (TempGlobalEntrySummary."Serial No." <> '') AND ItemTrackingCode."SN Specific Tracking" then
                 TempTrackingSpecification.Validate("Serial No.", TempGlobalEntrySummary."Serial No.");
-            if TempGlobalEntrySummary."Lot No." <> '' then
+            if (TempGlobalEntrySummary."Lot No." <> '') AND ItemTrackingCode."Lot Specific Tracking" then
                 TempTrackingSpecification.Validate("Lot No.", TempGlobalEntrySummary."Lot No.");
-            if TempGlobalEntrySummary."Package No." <> '' then
+            if (TempGlobalEntrySummary."Package No." <> '') AND ItemTrackingCode."Package Specific Tracking" then
                 TempTrackingSpecification.Validate("Package No.", TempGlobalEntrySummary."Package No.");
-
-            TempTrackingSpecification.Validate("Quantity (Base)", AssemblyHeader."Quantity (Base)");
-            TempTrackingSpecification.Validate("Qty. to Handle (Base)", AssemblyHeader."Quantity (Base)");
-            TempTrackingSpecification.Validate("Qty. to Invoice (Base)", AssemblyHeader."Quantity (Base)");
-            ItemTrackingLine.RegisterChange(TempTrackingSpecification, TempTrackingSpecification, ChangeType::Insert, false);
+        end else begin
+            if ItemTrackingCode."Lot Specific Tracking" then
+                TempTrackingSpecification.Validate("Lot No.", SortProdOrderRec."Lot No.");
+            if ItemTrackingCode."Package Specific Tracking" then
+                TempTrackingSpecification.Validate("Package No.", SortProdOrderRec."Package No.");
         end;
+        TempTrackingSpecification.Validate("Quantity (Base)", AssemblyHeader."Quantity (Base)");
+        TempTrackingSpecification.Validate("Qty. to Handle (Base)", AssemblyHeader."Quantity (Base)");
+        TempTrackingSpecification.Validate("Qty. to Invoice (Base)", AssemblyHeader."Quantity (Base)");
+
+        ItemTrackingLine.RegisterChange(TempTrackingSpecification, TempTrackingSpecification, ChangeType::Insert, false);
     end;
 
     // ASSEMBLY LINE (SUBFORM)
@@ -1058,6 +1421,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         RecRef.GetTable(Item);
         if Item."Item Tracking Code" = '' then
             PMPAppLogicMgmt.ErrorRecordRefwithAction(RecRef, Item.FieldNo(Description), Page::"Item Card", 'Empty Field', StrSubstNo('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', Item."No."));
+        GetItemTrackingCode(Item."No.");
 
         if AssemblyLineReserve.ReservEntryExist(AssemblyLine) then
             Error(
@@ -1069,20 +1433,28 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         RetrieveLookupData(TempTrackingSpecification, true);
         TempTrackingSpecification.Delete();
         TempGlobalEntrySummary.Reset();
-        TempGlobalEntrySummary.SetRange("Lot No.", SortProdOrderRec."Lot No.");
-        if TempGlobalEntrySummary.FindSet() then begin
+        if ItemTrackingCode."Lot Specific Tracking" then
+            TempGlobalEntrySummary.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+        if ItemTrackingCode."Package Specific Tracking" then
+            TempGlobalEntrySummary.SetRange("Package No.", SortProdOrderRec."Package No.");
+        if TempGlobalEntrySummary.FindFirst() then begin
             InsertReservEntryRecfromTempTrackSpecASMLINE(AssemblyLine, SortProdOrderRec, RecReservEntry, TempTrackingSpecification, TempGlobalEntrySummary."Lot No.", TempGlobalEntrySummary."Package No.");
         end else begin
             PackageNoInfo.SetAutoCalcFields();
             PackageNoInfo.SetRange("Item No.", AssemblyLine."No.");
             PackageNoInfo.SetFilter("Variant Code", AssemblyLine."Variant Code");
+            PackageNoInfo.SetFilter("Package No.", SortProdOrderRec."Package No.");
             // PackageNoInfo.SetFilter("PMP04 Bin Code", AssemblyLine."Bin Code");
             PackageNoInfo.SetRange(Inventory, 0);
             if PackageNoInfo.FindFirst() then
-                InsertReservEntryRecfromTempTrackSpecASMLINE(AssemblyLine, SortProdOrderRec, RecReservEntry, TempTrackingSpecification, PackageNoInfo."PMP04 Lot No.", PackageNoInfo."Package No.");
+                InsertReservEntryRecfromTempTrackSpecASMLINE(AssemblyLine, SortProdOrderRec, RecReservEntry, TempTrackingSpecification, PackageNoInfo."PMP04 Lot No.", PackageNoInfo."Package No.")
+            else begin
+                InsertReservEntryRecfromTempTrackSpecASMLINE(AssemblyLine, SortProdOrderRec, RecReservEntry, TempTrackingSpecification, SortProdOrderRec."Lot No.", SortProdOrderRec."Package No.")
+            end;
         end;
     end;
 
+    /// <summary>Creates and registers a <b>reservation entry tracking specification</b> for an Assembly Line, applying <b>lot and package tracking</b> based on Item Tracking Code configuration.</summary>
     local procedure InsertReservEntryRecfromTempTrackSpecASMLINE(var AssemblyLine: Record "Assembly Line"; SortProdOrderRec: Record "PMP15 Sortation PO Recording"; var RecReservEntry: Record "Reservation Entry"; TempTrackingSpecification: Record "Tracking Specification" temporary; LotNo: Code[50]; PackageNo: Code[50])
     var
         TypeHelper: Codeunit "Type Helper";
@@ -1108,9 +1480,9 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         TempTrackingSpecification.Validate("Source Prod. Order Line", SourceTrackingSpecification."Source Prod. Order Line");
         TempTrackingSpecification.Validate("Source Ref. No.", SourceTrackingSpecification."Source Ref. No.");
 
-        if LotNo <> '' then
+        if (LotNo <> '') AND ItemTrackingCode."Lot Specific Tracking" then
             TempTrackingSpecification.Validate("Lot No.", LotNo);
-        if PackageNo <> '' then
+        if (PackageNo <> '') AND ItemTrackingCode."Package Specific Tracking" then
             TempTrackingSpecification.Validate("Package No.", PackageNo);
 
         TempTrackingSpecification.Validate("Quantity (Base)", AssemblyLine."Quantity (Base)");
@@ -1152,6 +1524,17 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         if AssemblyLine.FindSet() then begin
             GenerateItemTrackingAssemblyLine(AssemblyLine, ProdOrder, SortProdOrderRec);
         end;
+    end;
+
+    /// <summary>Deletes <b>all Assembly Lines</b> associated with the specified <b>Assembly Document</b> (Document No. and Document Type).</summary>
+    local procedure DeleteAllAssemblyLineinDocumentOrder(AssemblyHeader: Record "Assembly Header")
+    var
+        AssemblyLine: Record "Assembly Line";
+    begin
+        AssemblyLine.Reset();
+        AssemblyLine.SetRange("Document No.", AssemblyHeader."No.");
+        AssemblyLine.SetRange("Document Type", AssemblyHeader."Document Type");
+        AssemblyLine.DeleteAll(true);
     end;
 
     /// <summary>Overload procedure that initializes a test insertion of an Item Journal Line for a Sortation Order without specifying the Item Ledger Entry Type.</summary>
@@ -1210,29 +1593,50 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         ProdOrdLine: Record "Prod. Order Line";
         ProdOrdComp: Record "Prod. Order Component";
         ProdOrdRoutingLine: Record "Prod. Order Routing Line";
+        LotNoInfoRec: Record "Lot No. Information";
+        OldLotNoInfoRec: Record "Lot No. Information";
+        BinContent: Record "Bin Content";
+        BinRec: Record Bin;
         SORPackageNo: Code[50];
-        LastLineNo, SORCrop : Integer;
+        LastLineNo: Integer;
+        SORCrop: Text[50];
         IsInsertSortation: Boolean;
     begin
+        BinRec.Reset();
+        BinContent.Reset();
+        ExtCompanySetup.Reset();
         IJL.Reset();
         ItemJnlTemplate.Reset();
         ItemJnlBatch.Reset();
         Item.Reset();
-        ExtCompanySetup.Reset();
+        LotNoInfoRec.Reset();
+        OldLotNoInfoRec.Reset();
         ProdOrderRec.Reset();
         ProdOrdLine.Reset();
         ProdOrdComp.Reset();
         ProdOrdRoutingLine.Reset();
+        Clear(IsInsertSortation);
         Clear(SORPackageNo);
         Clear(SORCrop);
-        Clear(IsInsertSortation);
 
         ExtCompanySetup.Get();
 
-        IJL.SetRange("Journal Template Name", ItemJnlLine."Journal Template Name");
-        IJL.SetRange("Journal Batch Name", ItemJnlLine."Journal Batch Name");
-        if IJL.FindLast() then
-            LastLineNo := IJL."Line No.";
+        if IJLEntryType = IJLEntryType::Consumption then begin
+            IJL.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
+            IJL.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
+            if IJL.FindLast() then
+                LastLineNo := IJL."Line No.";
+        end else if IJLEntryType = IJLEntryType::Output then begin
+            IJL.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Template");
+            IJL.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch");
+            if IJL.FindLast() then
+                LastLineNo := IJL."Line No.";
+        end else begin
+            IJL.SetRange("Journal Template Name", ItemJnlLine."Journal Template Name");
+            IJL.SetRange("Journal Batch Name", ItemJnlLine."Journal Batch Name");
+            if IJL.FindLast() then
+                LastLineNo := IJL."Line No.";
+        end;
 
         if LastLineNo mod 10000 > 0 then
             LastLineNo += LastLineNo mod 10000
@@ -1240,6 +1644,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             LastLineNo += 10000;
 
         if (SORStep_Step = SORStep_Step::"1") OR (SORStep_Step = SORStep_Step::"2") OR (SORStep_Step = SORStep_Step::"3") then begin
+            #region TestItemJnlLine STEP 1-3
             // SORTATION STEP FROM 0 TO 3, AS THE POSTING USING ITEM RECLASSIFICATION JOURNAL
             if Item.Get(SortProdOrderRec."Unsorted Item No.") then begin
                 tempItemJnlLine.Init();
@@ -1264,68 +1669,110 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 tempItemJnlLine.Validate(Quantity, SortProdOrderRec.Quantity);
                 tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."From Bin Code");
                 tempItemJnlLine.Validate("New Bin Code", SortProdOrderRec."To Bin Code");
-                tempItemJnlLine."Lot No." := SortProdOrderRec."Lot No.";
+
+                // tempItemJnlLine."Lot No." := SortProdOrderRec."Lot No.";
                 // tempItemJnlLine.Validate("New Lot No.", SortProdOrderRec."Lot No.");
                 tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
+
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                // LotNoInfoRec.Get(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.");
+                if not LotNoInformationIsExist(LotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.") then begin
+                    OldLotNoInfoRec.SetRange("Item No.", SortProdOrderRec."Unsorted Item No.");
+                    OldLotNoInfoRec.SetRange("Variant Code", SortProdOrderRec."Unsorted Variant Code");
+                    OldLotNoInfoRec.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+                    if OldLotNoInfoRec.FindFirst() then begin
+                        LotNoInfoRec := CreateNewLotNoInformationfromOldLotNoInfo(OldLotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.");
+                    end else begin
+                        Error('No Lot No. Information available for the Item Reclass for the Unsorted Item %1 - %2 during the creation of a new Lot No %3. Information record. Please review the current lot availability for the specified raw material.', SortProdOrderRec."Unsorted Item No.", SortProdOrderRec."Unsorted Variant Code", SortProdOrderRec."Lot No.");
+                    end;
+                end;
+
+                tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                tempItemJnlLine."PMP15 Output Item No." := SortProdOrderRec."Sorted Item No.";
+                tempItemJnlLine."PMP15 Output Variant Code" := SortProdOrderRec."Sorted Variant Code";
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
 
                 IsInsertSortation := true;
             end else
                 Error('There is no existing Item no. of %1 in the table', SortProdOrderRec."Unsorted Item No.");
-        end else if (SORStep_Step = SORStep_Step::"4") AND (SortProdOrderRec."Tobacco Type" = SortProdOrderRec."Tobacco Type"::Wrapper) then begin
+            #endregion TestItemJnlLine STEP 0-3
+        end else if (SORStep_Step = SORStep_Step::"4") AND (SortProdOrderRec."Tobacco Type" = SortProdOrderRec."Tobacco Type"::Wrapper) AND (SortProdOrderRec."Variant Changes" = '') then begin
+            #region TestItemJnlLine STEP 4 - WRAPPER
             // WRAPPER SECTION
             if IJLEntryType = IJLEntryType::Consumption then begin
                 ProdOrderRec.SetRange("No.", SortProdOrderRec."Sortation Prod. Order No.");
                 if not ProdOrderRec.FindFirst() then
                     Error('Production Order No. must not be blank. Please specify a valid Production Order No. before continuing.');
 
-                if Item.Get(SortProdOrderRec."Sorted Item No.") then begin
-                    tempItemJnlLine.Init();
-                    tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Template";
-                    tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch";
-                    tempItemJnlLine."Line No." := LastLineNo;
-                    if ItemJnlTemplate.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template") then begin
-                        tempItemJnlLine."Source Code" := ItemJnlTemplate."Source Code";
-                    end;
-                    // tempItemJnlLine."Source Code" := 'CONSUMPJNL';
-                    tempItemJnlLine."Source Type" := tempItemJnlLine."Source Type"::Item;
-                    if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch") then begin
-                        if ItemJnlBatch."No. Series" <> '' then begin
-                            tempItemJnlLine."Document No." := NoSeriesBatchMgmt.PeekNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
-                        end;
-                    end;
-                    tempItemJnlLine.Validate("Posting Date", SortProdOrderRec."Posting Date");
-                    tempItemJnlLine.Validate("Entry Type", tempItemJnlLine."Entry Type"::Consumption);
-                    tempItemJnlLine.Validate("Order Type", tempItemJnlLine."Order Type"::Production);
-                    tempItemJnlLine.Validate("Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-
-                    ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                    ProdOrdComp.SetRange("PMP15 Unsorted Item", true);
-                    if ProdOrdComp.FindFirst() then begin
-                        tempItemJnlLine.Validate("Item No.", ProdOrdComp."Item No.");
-                        tempItemJnlLine.Validate("Variant Code", ProdOrdComp."Variant Code");
-                        tempItemJnlLine.Validate("Prod. Order Comp. Line No.", ProdOrdComp."Line No.");
-                    end;
-
-                    ProdOrdLine.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                    ProdOrdLine.SetRange("Item No.", Item."No.");
-                    ProdOrdLine.SetFilter("Variant Code", SortProdOrderRec."Sorted Variant Code");
-                    if ProdOrdLine.FindFirst() then begin
-                        tempItemJnlLine.Validate("Order Line No.", ProdOrdLine."Line No.");
-                        tempItemJnlLine.Validate("Location Code", ProdOrdLine."Location Code");
-                    end;
-
-                    tempItemJnlLine.Validate(Quantity, SortProdOrderRec.Quantity);
-                    tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
-                    tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
-                    tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."To Bin Code");
-                    // tempItemJnlLine."Bin Code" := SortProdOrderRec."To Bin Code";
-                    tempItemJnlLine.Validate("Lot No.", SortProdOrderRec."Lot No.");
-                    // STOP & CUT IT HERE TO INSERT THE RELATED ITEM JOURNAL LINE
-                    if tempItemJnlLine.Insert() then
-                        exit(true)
-                    else
-                        exit(false);
+                // if Item.Get(SortProdOrderRec."Sorted Item No.") then begin
+                tempItemJnlLine.Init();
+                tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Template";
+                tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch";
+                tempItemJnlLine."Line No." := LastLineNo;
+                if ItemJnlTemplate.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template") then begin
+                    tempItemJnlLine."Source Code" := ItemJnlTemplate."Source Code";
                 end;
+                // tempItemJnlLine."Source Code" := 'CONSUMPJNL';
+                tempItemJnlLine."Source Type" := tempItemJnlLine."Source Type"::Item;
+                if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch") then begin
+                    if ItemJnlBatch."No. Series" <> '' then begin
+                        tempItemJnlLine."Document No." := NoSeriesBatchMgmt.PeekNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                    end;
+                end;
+                tempItemJnlLine.Validate("Posting Date", SortProdOrderRec."Posting Date");
+                tempItemJnlLine.Validate("Entry Type", tempItemJnlLine."Entry Type"::Consumption);
+                tempItemJnlLine.Validate("Order Type", tempItemJnlLine."Order Type"::Production);
+                tempItemJnlLine.Validate("Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+
+                ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                ProdOrdComp.SetRange("PMP15 Unsorted Item", true);
+                if ProdOrdComp.FindFirst() then begin
+                    tempItemJnlLine.Validate("Item No.", ProdOrdComp."Item No.");
+                    tempItemJnlLine.Validate("Variant Code", ProdOrdComp."Variant Code");
+                    tempItemJnlLine.Validate("Prod. Order Comp. Line No.", ProdOrdComp."Line No.");
+                end;
+
+                ProdOrdLine.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                ProdOrdLine.SetRange("Item No.", SortProdOrderRec."Sorted Item No.");
+                ProdOrdLine.SetFilter("Variant Code", SortProdOrderRec."Sorted Variant Code");
+                if ProdOrdLine.FindFirst() then begin
+                    tempItemJnlLine.Validate("Order Line No.", ProdOrdLine."Line No.");
+                    tempItemJnlLine.Validate("Location Code", ProdOrdLine."Location Code");
+                end;
+
+                tempItemJnlLine.Validate(Quantity, SortProdOrderRec.Quantity);
+                tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
+                tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
+                tempItemJnlLine."Bin Code" := SortProdOrderRec."From Bin Code";
+                // tempItemJnlLine.Validate("Lot No.", SortProdOrderRec."Lot No.");
+
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                if LotNoInfoRec.Get(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.") then begin
+                    tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                    tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                    tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                    tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                    tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                    tempItemJnlLine."PMP15 Output Item No." := SortProdOrderRec."Sorted Item No.";
+                    tempItemJnlLine."PMP15 Output Variant Code" := SortProdOrderRec."Sorted Variant Code";
+                end;
+
+
+                tempItemJnlLine."PMP15 Marked" := true;
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+                IsInsertSortation := true;
+
+                // // STOP & CUT IT HERE TO INSERT THE RELATED ITEM JOURNAL LINE
+                // if tempItemJnlLine.Insert() then
+                //     exit(true)
+                // else
+                //     exit(false);
+                // end;
             end else begin
                 ProdOrderRec.SetRange("No.", SortProdOrderRec."Sortation Prod. Order No.");
                 if not ProdOrderRec.FindFirst() then
@@ -1373,27 +1820,63 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
                     tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."To Bin Code");
 
-                    if SortProdOrderRec."Package No." <> '' then
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/15 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    if not LotNoInformationIsExist(LotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.") then begin
+                        OldLotNoInfoRec.SetRange("Item No.", SortProdOrderRec."Unsorted Item No.");
+                        OldLotNoInfoRec.SetRange("Variant Code", SortProdOrderRec."Unsorted Variant Code");
+                        OldLotNoInfoRec.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+                        if OldLotNoInfoRec.FindFirst() then begin
+                            LotNoInfoRec := CreateNewLotNoInformationfromOldLotNoInfo(OldLotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.");
+                        end else begin
+                            Error('No Lot No. Information available for the Output Journal for the Unsorted Item %1 - %2 during the creation of a new Lot No %3. Information record with the Tobacco Type of %4. Please review the current lot availability for the specified raw material.', SortProdOrderRec."Unsorted Item No.", SortProdOrderRec."Unsorted Variant Code", SortProdOrderRec."Lot No.", SortProdOrderRec."Tobacco Type");
+                        end;
+                    end;
+                    tempItemJnlLine."Lot No." := LotNoInfoRec."Lot No.";
+                    tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                    tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                    tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                    tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                    tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                    tempItemJnlLine."PMP15 Output Item No." := SortProdOrderRec."Sorted Item No.";
+                    tempItemJnlLine."PMP15 Output Variant Code" := SortProdOrderRec."Sorted Variant Code";
+
+                    // if (SortProdOrderRec."Package No." <> '') OR (SortProdOrderRec."Package No." <> ' ') then
+                    if PackageNoIsExist(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Package No.") then
                         tempItemJnlLine.Validate("Package No.", SortProdOrderRec."Package No.")
                     else begin
-                        Validate_TestInsertItemJnlLine_ITEMPMP04PackageNos(NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos"), Item."No.");
-                        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
-                        if NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos") <> '' then
+                        if Item."PMP04 Package Nos" = '' then begin
+                            Validate_TestInsertItemJnlLine_ITEMPMP04PackageNos(NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos"), Item."No.");
+                        end;
+                        if NoSeriesMgmt.PeekNextNo(Item."PMP04 Package Nos") <> '' then
                             // if ProdOrderRec."PMP15 Crop" = 0 then begin
                             if ProdOrderRec."PMP15 Crop" = '' then begin
-                                SORCrop := Date2DMY(WorkDate(), 3);
-                                SORPackageNo := COPYSTR(Format(SORCrop), STRLEN(Format(SORCrop)) - 1, 2) + NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos");
+                                LotNoInfoRec.Reset();
+                                LotNoInfoRec.SetRange("Item No.", ItemJnlLine."Item No.");
+                                LotNoInfoRec.SetRange("Variant Code", ItemJnlLine."Variant Code");
+                                LotNoInfoRec.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+                                if LotNoInfoRec.FindFirst() AND (LotNoInfoRec."PMP14 Crop" <> '') then begin
+                                    SORCrop := LotNoInfoRec."PMP14 Crop";
+                                end else begin
+                                    SORCrop := Format(Date2DMY(WorkDate(), 3));
+                                end;
+                                SORPackageNo := COPYSTR(Format(SORCrop), STRLEN(Format(SORCrop)) - 1, 2) + NoSeriesMgmt.GetNextNo(Item."PMP04 Package Nos");
                             end else
-                                SORPackageNo := COPYSTR(Format(ProdOrderRec."PMP15 Crop"), STRLEN(Format(ProdOrderRec."PMP15 Crop")) - 1, 2) + NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos");
-                        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                                SORPackageNo := COPYSTR(Format(ProdOrderRec."PMP15 Crop"), STRLEN(Format(ProdOrderRec."PMP15 Crop")) - 1, 2) + NoSeriesMgmt.GetNextNo(Item."PMP04 Package Nos");
                         tempItemJnlLine.Validate("Package No.", SORPackageNo);
+
+                        CreateNewPackagefromItemJnlLineOutput(tempItemJnlLine, SortProdOrderRec);
                     end;
-                    tempItemJnlLine."Lot No." := SortProdOrderRec."Lot No.";
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/15 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
                 end;
 
                 IsInsertSortation := true;
             end;
-        end else if (SORStep_Step = SORStep_Step::"4") AND (SortProdOrderRec."Tobacco Type" = SortProdOrderRec."Tobacco Type"::PW) then begin
+            #endregion TestItemJnlLine STEP 4 - WRAPPER
+        end else if (SORStep_Step = SORStep_Step::"4") AND (SortProdOrderRec."Tobacco Type" = SortProdOrderRec."Tobacco Type"::PW) AND (SortProdOrderRec."Variant Changes" = '') then begin
+            #region TestItemJnlLine STEP 4 - PW
             // SORTATION PW SECTION
             if IJLEntryType = IJLEntryType::Consumption then begin
                 ProdOrderRec.SetRange("No.", SortProdOrderRec."Sortation Prod. Order No.");
@@ -1421,23 +1904,54 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         tempItemJnlLine.Validate("Item No.", Item."No.");
                         tempItemJnlLine.Description := Item.Description;
                         tempItemJnlLine.Validate("Variant Code", SortProdOrderRec."Unsorted Variant Code");
+                        // tempItemJnlLine.Validate("Variant Code", PrOComp."Variant Code");
                         tempItemJnlLine.Validate("Quantity", SortProdOrderRec.Quantity);
                         tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
                         tempItemJnlLine.Validate("Location Code", PrOL."Location Code");
-                        tempItemJnlLine.Validate("Operation No.", PrORL."Operation No.");
+                        // tempItemJnlLine.Validate("Operation No.", PrORL."Operation No.");
+                        // tempItemJnlLine.Validate("Operation No.", ProdOrdRoutingLine."Operation No.");
                         tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
-                        tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."From Bin Code");
-                        // tempItemJnlLine."Bin Code" := SortProdOrderRec."To Bin Code";
-                        tempItemJnlLine."Lot No." := SortProdOrderRec."Lot No.";
-                        if tempItemJnlLine.Insert() then
-                            exit(true)
+                        // tempItemJnlLine."Bin Code" := SortProdOrderRec."From Bin Code";
+                        // VALIDATE BEFORE SETTING BIN CODE
+                        ValidateBinContentIsExistforItemJnlLine(BinContent, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+                        BinContent.SetRange("Bin Code", SortProdOrderRec."From Bin Code");
+                        if BinContent.FindFirst() then
+                            tempItemJnlLine."Bin Code" := SortProdOrderRec."From Bin Code"
                         else
-                            exit(false);
+                            Error('The Bin Code %1 is not available in the Bin Content with the Item of %2 %3, on %4 Location. Please make sure the related From Bin Code is available in the Bin Content.', SortProdOrderRec."From Bin Code", tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+
+                        tempItemJnlLine."Lot No." := SortProdOrderRec."Lot No.";
+
+                        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                        if LotNoInfoRec.Get(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Lot No.") then begin
+                            tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                            tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                            tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                            tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                            tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                            tempItemJnlLine."PMP15 Output Item No." := SortProdOrderRec."Sorted Item No.";
+                            tempItemJnlLine."PMP15 Output Variant Code" := SortProdOrderRec."Sorted Variant Code";
+                        end;
+                        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+                        tempItemJnlLine."PMP15 Marked" := true;
+
+                        IsInsertSortation := true;
+
+                        // if tempItemJnlLine.Insert() then
+                        //     exit(true)
+                        // else
+                        //     exit(false);
                     end;
                 end;
             end else begin
                 ProdOrderRec.SetRange("No.", SortProdOrderRec."Sortation Prod. Order No.");
                 if ProdOrderRec.FindFirst() then begin
+                    ProdOrdRoutingLine.SetRange(Status, ProdOrderRec.Status);
+                    ProdOrdRoutingLine.SetRange("Prod. Order No.", ProdOrderRec."No.");
+                    ProdOrdRoutingLine.SetRange("Routing Reference No.", PrOL."Line No.");
+                    if not ProdOrdRoutingLine.FindFirst() then exit;
+
                     tempItemJnlLine.Init();
                     tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Output Jnl. Template";
                     tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Output Jnl. Batch";
@@ -1464,73 +1978,157 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     tempItemJnlLine.Validate("Output Quantity", SortProdOrderRec.Quantity);
                     tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
                     tempItemJnlLine.Validate("Location Code", PrOL."Location Code");
-                    tempItemJnlLine.Validate("Operation No.", PrORL."Operation No.");
+                    tempItemJnlLine."Operation No." := ProdOrdRoutingLine."Operation No.";
+                    tempItemJnlLine.Type := ProdOrdRoutingLine.Type;
+                    tempItemJnlLine.Validate("No.", ProdOrdRoutingLine."No.");
                     tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
-                    tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."To Bin Code");
-                    if SortProdOrderRec."Package No." <> '' then
+                    // tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."To Bin Code");
+                    // VALIDATE BEFORE SETTING BIN CODE
+                    ValidateBinContentIsExistforItemJnlLine(BinContent, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+                    BinContent.SetRange("Bin Code", SortProdOrderRec."To Bin Code");
+                    if BinContent.FindFirst() then
+                        tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."To Bin Code")
+                    else
+                        Error('The Bin Code %1 is not available in the Bin Content with the Item of %2 %3, on %4 Location. Please make sure the related To Bin Code is available in the Bin Content.', SortProdOrderRec."To Bin Code", tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/15 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    if not LotNoInformationIsExist(LotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.") then begin
+                        OldLotNoInfoRec.SetRange("Item No.", SortProdOrderRec."Unsorted Item No.");
+                        OldLotNoInfoRec.SetRange("Variant Code", SortProdOrderRec."Unsorted Variant Code");
+                        OldLotNoInfoRec.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+                        if OldLotNoInfoRec.FindFirst() then begin
+                            LotNoInfoRec := CreateNewLotNoInformationfromOldLotNoInfo(OldLotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.");
+                        end else begin
+                            Error('No Lot No. Information available for the Output Journal for the Sorted Item %1 - %2 during the creation of a new Lot No %3. Information record with the Tobacco Type of %4. Please review the current lot availability for the specified unsorted item.', SortProdOrderRec."Unsorted Item No.", SortProdOrderRec."Unsorted Variant Code", SortProdOrderRec."Lot No.", SortProdOrderRec."Tobacco Type");
+                        end;
+                    end;
+                    tempItemJnlLine."Lot No." := LotNoInfoRec."Lot No.";
+                    tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                    tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                    tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                    tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                    tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                    tempItemJnlLine."PMP15 Output Item No." := SortProdOrderRec."Sorted Item No.";
+                    tempItemJnlLine."PMP15 Output Variant Code" := SortProdOrderRec."Sorted Variant Code";
+
+                    if PackageNoIsExist(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Package No.") then
                         tempItemJnlLine.Validate("Package No.", SortProdOrderRec."Package No.")
                     else begin
-                        Validate_TestInsertItemJnlLine_ITEMPMP04PackageNos(NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos"), Item."No.");
-                        if NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos") <> '' then
-                            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                        if Item."PMP04 Package Nos" = '' then begin
+                            Validate_TestInsertItemJnlLine_ITEMPMP04PackageNos(NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos"), Item."No.");
+                        end;
+                        if NoSeriesMgmt.PeekNextNo(Item."PMP04 Package Nos") <> '' then
                             // if ProdOrderRec."PMP15 Crop" = 0 then begin
                             if ProdOrderRec."PMP15 Crop" = '' then begin
-                                SORCrop := Date2DMY(WorkDate(), 3);
-                                SORPackageNo := COPYSTR(Format(SORCrop), STRLEN(Format(SORCrop)) - 1, 2) + NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos");
+                                LotNoInfoRec.Reset();
+                                LotNoInfoRec.SetRange("Item No.", ItemJnlLine."Item No.");
+                                LotNoInfoRec.SetRange("Variant Code", ItemJnlLine."Variant Code");
+                                LotNoInfoRec.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+                                if LotNoInfoRec.FindFirst() AND (LotNoInfoRec."PMP14 Crop" <> '') then begin
+                                    SORCrop := LotNoInfoRec."PMP14 Crop";
+                                end else begin
+                                    SORCrop := Format(Date2DMY(WorkDate(), 3));
+                                end;
+                                SORPackageNo := COPYSTR(Format(SORCrop), STRLEN(Format(SORCrop)) - 1, 2) + NoSeriesMgmt.GetNextNo(Item."PMP04 Package Nos");
                             end else
-                                SORPackageNo := COPYSTR(Format(ProdOrderRec."PMP15 Crop"), STRLEN(Format(ProdOrderRec."PMP15 Crop")) - 1, 2) + NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos");
-                        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                                SORPackageNo := COPYSTR(Format(ProdOrderRec."PMP15 Crop"), STRLEN(Format(ProdOrderRec."PMP15 Crop")) - 1, 2) + NoSeriesMgmt.GetNextNo(Item."PMP04 Package Nos");
                         tempItemJnlLine.Validate("Package No.", SORPackageNo);
+                        CreateNewPackagefromItemJnlLineOutput(tempItemJnlLine, SortProdOrderRec);
                     end;
-                    tempItemJnlLine."Lot No." := SortProdOrderRec."Lot No.";
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/15 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
 
                     IsInsertSortation := true;
                 end;
             end;
-        end else if (SORStep_Step = SORStep_Step::"4") AND (SortProdOrderRec."Tobacco Type" = SortProdOrderRec."Tobacco Type"::Filler) then begin
+            #endregion TestItemJnlLine STEP 4 - PW
+        end else if (SORStep_Step = SORStep_Step::"4") AND (SortProdOrderRec."Tobacco Type" = SortProdOrderRec."Tobacco Type"::Filler) AND (SortProdOrderRec."Variant Changes" = '') AND (SortProdOrderRec."Variant Changes" = '') then begin
+            #region TestItemJnlLine STEP 4 - FILLER
             // SORTATION FILLER SECTION
             if IJLEntryType = IJLEntryType::Consumption then begin
                 ProdOrderRec.SetRange("No.", SortProdOrderRec."Sortation Prod. Order No.");
                 if ProdOrderRec.FindFirst() then begin
-                    if Item.Get(ProdOrdComp."Item No.") then begin // At this moment, the record is related to the FILLER Item
-                        tempItemJnlLine.Init();
-                        tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Template";
-                        tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch";
-                        tempItemJnlLine."Line No." := LastLineNo;
-                        if ItemJnlTemplate.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template") then begin
-                            tempItemJnlLine."Source Code" := ItemJnlTemplate."Source Code";
-                        end;
-                        // tempItemJnlLine."Source Code" := 'CONSUMPJNL';
-                        tempItemJnlLine."Source Type" := tempItemJnlLine."Source Type"::Item;
-                        if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch") then begin
-                            if ItemJnlBatch."No. Series" <> '' then begin
-                                tempItemJnlLine."Document No." := NoSeriesBatchMgmt.PeekNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
-                            end;
-                        end;
-                        tempItemJnlLine.Validate("Posting Date", SortProdOrderRec."Posting Date");
-                        tempItemJnlLine.Validate("Entry Type", tempItemJnlLine."Entry Type"::Consumption);
-                        tempItemJnlLine.Validate("Order Type", tempItemJnlLine."Order Type"::Production);
-                        tempItemJnlLine.Validate("Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                        tempItemJnlLine.Validate("Order Line No.", PrOL."Line No."); // Doesn't related to the Chosen Item
-                        tempItemJnlLine.Validate("Item No.", Item."No.");
-                        tempItemJnlLine.Description := Item.Description;
-                        tempItemJnlLine.Validate("Variant Code", SortProdOrderRec."Unsorted Variant Code");
-                        tempItemJnlLine.Validate("Location Code", PrOL."Location Code");
-                        tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
-                        tempItemJnlLine.Validate("Quantity", SortProdOrderRec.Quantity);
-                        tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
-                        tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."From Bin Code");
-                        // tempItemJnlLine."Bin Code" := SortProdOrderRec."To Bin Code";
-                        tempItemJnlLine.Validate("Lot No.", SortProdOrderRec."Lot No.");
-                        if tempItemJnlLine.Insert() then
-                            exit(true)
-                        else
-                            exit(false);
+                    // if Item.Get(PrOComp."Item No.") then begin
+                    tempItemJnlLine.Init();
+                    tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Template";
+                    tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch";
+                    tempItemJnlLine."Line No." := LastLineNo;
+                    if ItemJnlTemplate.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template") then begin
+                        tempItemJnlLine."Source Code" := ItemJnlTemplate."Source Code";
                     end;
+                    // tempItemJnlLine."Source Code" := 'CONSUMPJNL';
+                    tempItemJnlLine."Source Type" := tempItemJnlLine."Source Type"::Item;
+                    if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch") then begin
+                        if ItemJnlBatch."No. Series" <> '' then begin
+                            tempItemJnlLine."Document No." := NoSeriesBatchMgmt.PeekNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                        end;
+                    end;
+                    tempItemJnlLine.Validate("Posting Date", SortProdOrderRec."Posting Date");
+                    tempItemJnlLine.Validate("Entry Type", tempItemJnlLine."Entry Type"::Consumption);
+                    tempItemJnlLine.Validate("Order Type", tempItemJnlLine."Order Type"::Production);
+                    tempItemJnlLine.Validate("Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                    tempItemJnlLine.Validate("Order Line No.", PrOL."Line No.");
+
+                    ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                    ProdOrdComp.SetRange("PMP15 Unsorted Item", true);
+                    if ProdOrdComp.FindFirst() then begin
+                        tempItemJnlLine.Validate("Item No.", ProdOrdComp."Item No.");
+                        tempItemJnlLine.Validate("Variant Code", ProdOrdComp."Variant Code");
+                        Item.Get(tempItemJnlLine."Item No.");
+                        tempItemJnlLine.Description := Item.Description;
+                        // tempItemJnlLine.Validate("Prod. Order Comp. Line No.", ProdOrdComp."Line No.");
+                    end;
+
+                    // tempItemJnlLine.Validate("Item No.", Item."No.");
+                    // tempItemJnlLine.Validate("Variant Code", SortProdOrderRec."Unsorted Variant Code");
+                    // tempItemJnlLine.Validate("Variant Code", PrOComp."Variant Code");
+                    tempItemJnlLine.Validate("Location Code", PrOL."Location Code");
+                    tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
+                    tempItemJnlLine.Validate("Quantity", SortProdOrderRec.Quantity);
+                    tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
+                    // tempItemJnlLine."Bin Code" := SortProdOrderRec."From Bin Code";
+                    // VALIDATE BEFORE SETTING BIN CODE
+                    ValidateBinContentIsExistforItemJnlLine(BinContent, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+                    BinContent.SetRange("Bin Code", SortProdOrderRec."From Bin Code");
+                    if BinContent.FindFirst() then
+                        tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."From Bin Code")
+                    else
+                        Error('The Bin Code %1 is not available in the Bin Content with the Item of %2 %3, on %4 Location. Please make sure the related From Bin Code is available in the Bin Content.', SortProdOrderRec."From Bin Code", tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+
+                    tempItemJnlLine."Lot No." := SortProdOrderRec."Lot No.";
+
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    if LotNoInfoRec.Get(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Lot No.") then begin
+                        tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                        tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                        tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                        tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                        tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                        tempItemJnlLine."PMP15 Output Item No." := SortProdOrderRec."Sorted Item No.";
+                        tempItemJnlLine."PMP15 Output Variant Code" := SortProdOrderRec."Sorted Variant Code";
+                    end;
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+                    tempItemJnlLine."PMP15 Marked" := true;
+
+                    IsInsertSortation := true;
+
+                    // if tempItemJnlLine.Insert() then
+                    //     exit(true)
+                    // else
+                    //     exit(false);
+                    // end;
                 end;
             end else begin
                 ProdOrderRec.SetRange("No.", SortProdOrderRec."Sortation Prod. Order No.");
                 if ProdOrderRec.FindFirst() then begin
+                    ProdOrdRoutingLine.SetRange(Status, ProdOrderRec.Status);
+                    ProdOrdRoutingLine.SetRange("Prod. Order No.", ProdOrderRec."No.");
+                    ProdOrdRoutingLine.SetRange("Routing Reference No.", PrOL."Line No.");
+                    if not ProdOrdRoutingLine.FindFirst() then exit;
+
                     tempItemJnlLine.Init();
                     tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Output Jnl. Template";
                     tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Output Jnl. Batch";
@@ -1557,70 +2155,155 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     tempItemJnlLine.Validate("Output Quantity", SortProdOrderRec.Quantity);
                     tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
                     tempItemJnlLine.Validate("Location Code", PrOL."Location Code");
-                    tempItemJnlLine.Validate("Operation No.", PrORL."Operation No.");
+                    tempItemJnlLine.Validate("Operation No.", ProdOrdRoutingLine."Operation No.");
+                    tempItemJnlLine.Type := ProdOrdRoutingLine.Type;
+                    tempItemJnlLine.Validate("No.", ProdOrdRoutingLine."No.");
                     tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
-                    tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."To Bin Code");
-                    if SortProdOrderRec."Package No." <> '' then
+
+                    // VALIDATE BEFORE SETTING BIN CODE
+                    ValidateBinContentIsExistforItemJnlLine(BinContent, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+                    BinContent.SetRange("Bin Code", SortProdOrderRec."To Bin Code");
+                    if BinContent.FindFirst() then
+                        tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."To Bin Code")
+                    else
+                        Error('The Bin Code %1 is not available in the Bin Content with the Item of %2 %3, on %4 Location. Please make sure the related To Bin Code is available in the Bin Content.', SortProdOrderRec."To Bin Code", tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/10 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    if not LotNoInformationIsExist(LotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.") then begin
+                        ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                        ProdOrdComp.SetRange("PMP15 Unsorted Item", true);
+                        if ProdOrdComp.FindFirst() then begin
+                            OldLotNoInfoRec.SetRange("Item No.", ProdOrdComp."Item No.");
+                            OldLotNoInfoRec.SetRange("Variant Code", ProdOrdComp."Variant Code");
+                            OldLotNoInfoRec.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+                            if OldLotNoInfoRec.FindFirst() then begin
+                                LotNoInfoRec := CreateNewLotNoInformationfromOldLotNoInfo(OldLotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.");
+                            end
+                        end else begin
+                            Error('No Lot No. Information available for the Output Journal for the Sorted Item %1 - %2 during the creation of a new Lot No %3. Information record with the Tobacco Type of %4. Please review the current lot availability for the specified unsorted item.', SortProdOrderRec."Unsorted Item No.", SortProdOrderRec."Unsorted Variant Code", SortProdOrderRec."Lot No.", SortProdOrderRec."Tobacco Type");
+                        end;
+                    end;
+                    tempItemJnlLine."Lot No." := LotNoInfoRec."Lot No.";
+                    tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                    tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                    tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                    tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                    tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                    tempItemJnlLine."PMP15 Output Item No." := SortProdOrderRec."Sorted Item No.";
+                    tempItemJnlLine."PMP15 Output Variant Code" := SortProdOrderRec."Sorted Variant Code";
+
+                    if PackageNoIsExist(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Package No.") then
                         tempItemJnlLine.Validate("Package No.", SortProdOrderRec."Package No.")
                     else begin
-                        Validate_TestInsertItemJnlLine_ITEMPMP04PackageNos(NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos"), Item."No.");
-                        if NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos") <> '' then
+                        if Item."PMP04 Package Nos" = '' then begin
+                            Validate_TestInsertItemJnlLine_ITEMPMP04PackageNos(NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos"), Item."No.");
+                        end;
+                        if NoSeriesMgmt.PeekNextNo(Item."PMP04 Package Nos") <> '' then
                             // if ProdOrderRec."PMP15 Crop" = 0 then begin
                             if ProdOrderRec."PMP15 Crop" = '' then begin
-                                SORCrop := Date2DMY(WorkDate(), 3);
-                                SORPackageNo := COPYSTR(Format(SORCrop), STRLEN(Format(SORCrop)) - 1, 2) + NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos");
+                                LotNoInfoRec.Reset();
+                                LotNoInfoRec.SetRange("Item No.", ItemJnlLine."Item No.");
+                                LotNoInfoRec.SetRange("Variant Code", ItemJnlLine."Variant Code");
+                                LotNoInfoRec.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+                                if LotNoInfoRec.FindFirst() AND (LotNoInfoRec."PMP14 Crop" <> '') then begin
+                                    SORCrop := LotNoInfoRec."PMP14 Crop";
+                                end else begin
+                                    SORCrop := Format(Date2DMY(WorkDate(), 3));
+                                end;
+                                SORPackageNo := COPYSTR(Format(SORCrop), STRLEN(Format(SORCrop)) - 1, 2) + NoSeriesMgmt.GetNextNo(Item."PMP04 Package Nos");
                             end else
-                                SORPackageNo := COPYSTR(Format(ProdOrderRec."PMP15 Crop"), STRLEN(Format(ProdOrderRec."PMP15 Crop")) - 1, 2) + NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos");
+                                SORPackageNo := COPYSTR(Format(ProdOrderRec."PMP15 Crop"), STRLEN(Format(ProdOrderRec."PMP15 Crop")) - 1, 2) + NoSeriesMgmt.GetNextNo(Item."PMP04 Package Nos");
                         tempItemJnlLine.Validate("Package No.", SORPackageNo);
+
+                        CreateNewPackagefromItemJnlLineOutput(tempItemJnlLine, SortProdOrderRec);
                     end;
-                    tempItemJnlLine."Lot No." := SortProdOrderRec."Lot No.";
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/10 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
                     IsInsertSortation := true;
                 end;
             end;
+            #endregion TestItemJnlLine STEP 4 - FILLER
         end else if (SORStep_Step = SORStep_Step::"4") AND (SortProdOrderRec."Variant Changes" <> '') then begin
+            #region TestItemJnlLine STEP 4 - VARIANT CHANGES
             // SORTATION PRODUCTION ORDER - VARIANT CHANGES SECTION
             if IJLEntryType = IJLEntryType::Consumption then begin
                 ProdOrderRec.SetRange("No.", SortProdOrderRec."Sortation Prod. Order No.");
                 if ProdOrderRec.FindFirst() then begin
-                    if Item.Get(ProdOrdComp."Item No.") then begin // At this moment, the record is related to the FILLER Item
-                        tempItemJnlLine.Init();
-                        tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Template";
-                        tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch";
-                        tempItemJnlLine."Line No." := LastLineNo;
-                        if ItemJnlTemplate.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template") then begin
-                            tempItemJnlLine."Source Code" := ItemJnlTemplate."Source Code";
-                        end;
-                        // tempItemJnlLine."Source Code" := 'CONSUMPJNL';
-                        tempItemJnlLine."Source Type" := tempItemJnlLine."Source Type"::Item;
-                        if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch") then begin
-                            if ItemJnlBatch."No. Series" <> '' then begin
-                                tempItemJnlLine."Document No." := NoSeriesBatchMgmt.PeekNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
-                            end;
-                        end;
-                        tempItemJnlLine.Validate("Posting Date", SortProdOrderRec."Posting Date");
-                        tempItemJnlLine.Validate("Entry Type", tempItemJnlLine."Entry Type"::Consumption);
-                        tempItemJnlLine.Validate("Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                        tempItemJnlLine.Validate("Order Line No.", PrOL."Line No."); // Doesn't related to the Chosen Item
-                        tempItemJnlLine.Validate("Order Type", tempItemJnlLine."Order Type"::Production);
-                        tempItemJnlLine.Validate("Item No.", Item."No.");
-                        tempItemJnlLine.Description := Item.Description;
-                        tempItemJnlLine.Validate("Variant Code", SortProdOrderRec."Unsorted Variant Code");
-                        tempItemJnlLine.Validate("Location Code", PrOL."Location Code");
-                        tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
-                        tempItemJnlLine.Validate("Quantity", SortProdOrderRec.Quantity);
-                        tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
-                        tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."From Bin Code");
-                        // tempItemJnlLine."Bin Code" := SortProdOrderRec."To Bin Code";
-                        tempItemJnlLine.Validate("Lot No.", SortProdOrderRec."Lot No.");
-                        if tempItemJnlLine.Insert() then
-                            exit(true)
-                        else
-                            exit(false);
+                    // if Item.Get(ProdOrdComp."Item No.") then begin 
+                    tempItemJnlLine.Init();
+                    tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Template";
+                    tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch";
+                    tempItemJnlLine."Line No." := LastLineNo;
+                    if ItemJnlTemplate.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template") then begin
+                        tempItemJnlLine."Source Code" := ItemJnlTemplate."Source Code";
                     end;
+                    // tempItemJnlLine."Source Code" := 'CONSUMPJNL';
+                    tempItemJnlLine."Source Type" := tempItemJnlLine."Source Type"::Item;
+                    if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch") then begin
+                        if ItemJnlBatch."No. Series" <> '' then begin
+                            tempItemJnlLine."Document No." := NoSeriesBatchMgmt.PeekNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                        end;
+                    end;
+                    tempItemJnlLine.Validate("Posting Date", SortProdOrderRec."Posting Date");
+                    tempItemJnlLine.Validate("Entry Type", tempItemJnlLine."Entry Type"::Consumption);
+                    tempItemJnlLine.Validate("Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                    tempItemJnlLine.Validate("Order Line No.", PrOL."Line No."); // Doesn't related to the Chosen Item
+                    tempItemJnlLine.Validate("Order Type", tempItemJnlLine."Order Type"::Production);
+
+                    ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                    ProdOrdComp.SetRange("PMP15 Unsorted Item", true);
+                    if ProdOrdComp.FindFirst() then begin
+                        tempItemJnlLine.Validate("Item No.", ProdOrdComp."Item No.");
+                        tempItemJnlLine.Validate("Variant Code", ProdOrdComp."Variant Code");
+                        Item.Get(tempItemJnlLine."Item No.");
+                        tempItemJnlLine.Description := Item.Description;
+                        // tempItemJnlLine.Validate("Prod. Order Comp. Line No.", ProdOrdComp."Line No.");
+                    end;
+
+                    // tempItemJnlLine.Validate("Item No.", Item."No.");
+                    // tempItemJnlLine.Description := Item.Description;
+                    // tempItemJnlLine.Validate("Variant Code", SortProdOrderRec."Unsorted Variant Code");
+                    tempItemJnlLine.Validate("Location Code", PrOL."Location Code");
+                    tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
+                    tempItemJnlLine.Validate("Quantity", SortProdOrderRec.Quantity);
+                    tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
+                    tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."From Bin Code");
+                    tempItemJnlLine.Validate("Lot No.", SortProdOrderRec."Lot No.");
+
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    // SETTING VARIANT CHANGES
+                    tempItemJnlLine."PMP15 Variant Changes (From)" := SortProdOrderRec."Sorted Variant Code";
+                    tempItemJnlLine."PMP15 Variant Changes (To)" := PrOL."Variant Code";
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    LotNoInfoRec.Get(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Lot No.");
+
+                    tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                    tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                    tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                    tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                    tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                    tempItemJnlLine."PMP15 Output Item No." := SortProdOrderRec."Sorted Item No.";
+                    tempItemJnlLine."PMP15 Output Variant Code" := SortProdOrderRec."Variant Changes";
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+                    tempItemJnlLine."PMP15 Marked" := true;
+
+                    IsInsertSortation := true;
+
+                    // if tempItemJnlLine.Insert() then
+                    //     exit(true)
+                    // else
+                    //     exit(false);
+                    // end;
                 end;
             end else begin
                 ProdOrderRec.SetRange("No.", SortProdOrderRec."Sortation Prod. Order No.");
                 if ProdOrderRec.FindFirst() then begin
+                    ProdOrdRoutingLine.SetRange(Status, ProdOrderRec.Status);
+                    ProdOrdRoutingLine.SetRange("Prod. Order No.", ProdOrderRec."No.");
+                    ProdOrdRoutingLine.SetRange("Routing Reference No.", PrOL."Line No.");
+                    if not ProdOrdRoutingLine.FindFirst() then exit;
+
                     tempItemJnlLine.Init();
                     tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Output Jnl. Template";
                     tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Output Jnl. Batch";
@@ -1647,34 +2330,88 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     tempItemJnlLine.Validate("Output Quantity", SortProdOrderRec.Quantity);
                     tempItemJnlLine.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
                     tempItemJnlLine.Validate("Location Code", PrOL."Location Code");
-                    tempItemJnlLine.Validate("Operation No.", PrORL."Operation No.");
+                    tempItemJnlLine.Validate("Operation No.", ProdOrdRoutingLine."Operation No.");
+                    tempItemJnlLine.Type := ProdOrdRoutingLine.Type;
+                    tempItemJnlLine.Validate("No.", ProdOrdRoutingLine."No.");
                     tempItemJnlLine."Work Shift Code" := SortProdOrderRec."Work Shift Code";
-                    tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."To Bin Code");
-                    if SortProdOrderRec."Package No." <> '' then
+
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    // SETTING VARIANT CHANGES
+                    tempItemJnlLine."PMP15 Variant Changes (From)" := SortProdOrderRec."Sorted Variant Code";
+                    tempItemJnlLine."PMP15 Variant Changes (To)" := PrOL."Variant Code";
+
+                    tempItemJnlLine."PMP15 Sub Merk 1" := GetSubmerk1fromItemNVariant(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code");
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+                    // VALIDATE BEFORE SETTING BIN CODE
+                    ValidateBinContentIsExistforItemJnlLine(BinContent, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+                    BinContent.SetRange("Bin Code", SortProdOrderRec."To Bin Code");
+                    if BinContent.FindFirst() then
+                        tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."To Bin Code")
+                    else
+                        Error('The Bin Code %1 is not available in the Bin Content with the Item of %2 %3, on %4 Location. Please make sure the related To Bin Code is available in the Bin Content.', SortProdOrderRec."To Bin Code", tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+                    // tempItemJnlLine.Validate("Bin Code", SortProdOrderRec."To Bin Code");
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    if not LotNoInformationIsExist(LotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.") then begin
+                        ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                        ProdOrdComp.SetRange("PMP15 Unsorted Item", true);
+                        if ProdOrdComp.FindFirst() then begin
+                            OldLotNoInfoRec.SetRange("Item No.", ProdOrdComp."Item No.");
+                            OldLotNoInfoRec.SetRange("Variant Code", ProdOrdComp."Variant Code");
+                            OldLotNoInfoRec.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+                            if OldLotNoInfoRec.FindFirst() then begin
+                                LotNoInfoRec := CreateNewLotNoInformationfromOldLotNoInfo(OldLotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Lot No.");
+                            end
+                        end else begin
+                            Error('No Lot No. Information available for the Output Journal for the Sorted Item %1 - %2 during the creation of a new Lot No %3. Information record with the Tobacco Type of %4. Please review the current lot availability for the specified unsorted item.', SortProdOrderRec."Unsorted Item No.", SortProdOrderRec."Unsorted Variant Code", SortProdOrderRec."Lot No.", SortProdOrderRec."Tobacco Type");
+                        end;
+                    end;
+                    tempItemJnlLine."Lot No." := LotNoInfoRec."Lot No.";
+                    tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                    tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                    tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                    tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                    tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                    tempItemJnlLine."PMP15 Output Item No." := SortProdOrderRec."Sorted Item No.";
+                    tempItemJnlLine."PMP15 Output Variant Code" := SortProdOrderRec."Variant Changes";
+
+                    if PackageNoIsExist(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SortProdOrderRec."Package No.") then
                         tempItemJnlLine.Validate("Package No.", SortProdOrderRec."Package No.")
                     else begin
-                        Validate_TestInsertItemJnlLine_ITEMPMP04PackageNos(NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos"), Item."No.");
-                        if NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos") <> '' then
-                            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                        if Item."PMP04 Package Nos" = '' then begin
+                            Validate_TestInsertItemJnlLine_ITEMPMP04PackageNos(NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos"), Item."No.");
+                        end;
+                        if NoSeriesMgmt.PeekNextNo(Item."PMP04 Package Nos") <> '' then
                             // if ProdOrderRec."PMP15 Crop" = 0 then begin
                             if ProdOrderRec."PMP15 Crop" = '' then begin
-                                SORCrop := Date2DMY(WorkDate(), 3);
-                                SORPackageNo := COPYSTR(Format(SORCrop), STRLEN(Format(SORCrop)) - 1, 2) + NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos");
+                                LotNoInfoRec.Reset();
+                                LotNoInfoRec.SetRange("Item No.", ItemJnlLine."Item No.");
+                                LotNoInfoRec.SetRange("Variant Code", ItemJnlLine."Variant Code");
+                                LotNoInfoRec.SetRange("Lot No.", SortProdOrderRec."Lot No.");
+                                if LotNoInfoRec.FindFirst() AND (LotNoInfoRec."PMP14 Crop" <> '') then begin
+                                    SORCrop := LotNoInfoRec."PMP14 Crop";
+                                end else begin
+                                    SORCrop := Format(Date2DMY(WorkDate(), 3));
+                                end;
+                                SORPackageNo := COPYSTR(Format(SORCrop), STRLEN(Format(SORCrop)) - 1, 2) + NoSeriesMgmt.GetNextNo(Item."PMP04 Package Nos");
                             end else
-                                SORPackageNo := COPYSTR(Format(ProdOrderRec."PMP15 Crop"), STRLEN(Format(ProdOrderRec."PMP15 Crop")) - 1, 2) + NoSeriesMgmt.GetLastNoUsed(Item."PMP04 Package Nos");
-                        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                                SORPackageNo := COPYSTR(Format(ProdOrderRec."PMP15 Crop"), STRLEN(Format(ProdOrderRec."PMP15 Crop")) - 1, 2) + NoSeriesMgmt.GetNextNo(Item."PMP04 Package Nos");
                         tempItemJnlLine.Validate("Package No.", SORPackageNo);
+
+                        CreateNewPackagefromItemJnlLineOutput(tempItemJnlLine, SortProdOrderRec);
                     end;
-                    tempItemJnlLine."Lot No." := SortProdOrderRec."Lot No.";
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
                     IsInsertSortation := true;
                 end;
             end;
+            #endregion TestItemJnlLine STEP 4 - VARIANT CHANGES
         end;
 
         if IsInsertSortation then begin
             tempItemJnlLine."PMP15 Prod. Order No." := SortProdOrderRec."Sortation Prod. Order No.";
             tempItemJnlLine."PMP15 Production Type" := tempItemJnlLine."PMP15 Production Type"::"SOR-Sortation";
-            tempItemJnlLine."PMP15 Sub Merk 1" := SortProdOrderRec."Submerk 1";
+            if tempItemJnlLine."PMP15 Sub Merk 1" = '' then
+                tempItemJnlLine."PMP15 Sub Merk 1" := SortProdOrderRec."Submerk 1";
             tempItemJnlLine."PMP15 Sub Merk 2" := SortProdOrderRec."Submerk 2";
             tempItemJnlLine."PMP15 Sub Merk 3" := SortProdOrderRec."Submerk 3";
             tempItemJnlLine."PMP15 Sub Merk 4" := SortProdOrderRec."Submerk 4";
@@ -1703,7 +2440,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         end;
     end;
 
-    // Creates and inserts a Reservation Entry from temporary tracking and journal line data based on sortation and tracking specifications.
+    ///<summary>Creates and inserts a Reservation Entry from temporary tracking and journal line data based on sortation and tracking specifications.</summary>
     local procedure InsertReservEntryRecfromTempTrackSpecIJL(var RecReservEntry: Record "Reservation Entry"; var TempTrackingSpecification: Record "Tracking Specification" temporary; var RecItemJnlLine: Record "Item Journal Line"; SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary; SerLotPkgArr: array[3] of Code[50])
     var
         TypeHelper: Codeunit "Type Helper";
@@ -1740,11 +2477,11 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         TempTrackingSpecification.Validate("Source Ref. No.", SourceTrackingSpecification."Source Ref. No.");
         if SortProdOrderRec."SORStep Step" in [SortProdOrderRec."SORStep Step"::"1", SortProdOrderRec."SORStep Step"::"2", SortProdOrderRec."SORStep Step"::"3"] then begin
             TempTrackingSpecification.Validate("Bin Code", RecItemJnlLine."Bin Code");
-            TempTrackingSpecification.Validate("Lot No.", RecItemJnlLine."Lot No.");
             if SerLotPkgArr[1] <> '' then
                 TempTrackingSpecification.Validate("Serial No.", SerLotPkgArr[1]);
             if SerLotPkgArr[2] <> '' then
-                TempTrackingSpecification.Validate("New Lot No.", SerLotPkgArr[2]);
+                TempTrackingSpecification.Validate("Lot No.", SerLotPkgArr[2]);
+            // TempTrackingSpecification.Validate("New Lot No.", SerLotPkgArr[2]);
             if SerLotPkgArr[3] <> '' then
                 TempTrackingSpecification.Validate("Package No.", SerLotPkgArr[3]);
             TempTrackingSpecification.Positive := true;
@@ -1803,23 +2540,36 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         RetrieveLookupData(TempTrackingSpecification, true);
         TempTrackingSpecification.Delete();
         TempGlobalEntrySummary.Reset();
-        TempGlobalEntrySummary.SetFilter("Lot No.", RecItemJnlLine."Lot No.");
+        // TempGlobalEntrySummary.SetFilter("Lot No.", RecItemJnlLine."Lot No.");
+        if RecItemJnlLine."Lot No." <> '' then
+            TempGlobalEntrySummary.SetFilter("Lot No.", RecItemJnlLine."Lot No.")
+        else
+            TempGlobalEntrySummary.SetFilter("Lot No.", SortProdOrderRec."Lot No.");
         TempGlobalEntrySummary.SetFilter("Package No.", RecItemJnlLine."Package No.");
-        if TempGlobalEntrySummary.FindSet() then begin
+        if TempGlobalEntrySummary.FindFirst() then begin
             SerLotPkgArr[1] := TempGlobalEntrySummary."Serial No.";
             SerLotPkgArr[2] := TempGlobalEntrySummary."Lot No.";
             SerLotPkgArr[3] := TempGlobalEntrySummary."Package No.";
             InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SortProdOrderRec, SerLotPkgArr);
         end else begin
-            PackageNoInfo.SetAutoCalcFields();
+            PackageNoInfo.SetAutoCalcFields("PMP04 Bin Code", "PMP04 Lot No.");
             PackageNoInfo.SetRange("Item No.", RecItemJnlLine."Item No.");
             PackageNoInfo.SetFilter("Variant Code", RecItemJnlLine."Variant Code");
+            PackageNoInfo.SetFilter("Package No.", RecItemJnlLine."Package No.");
             // PackageNoInfo.SetFilter("PMP04 Bin Code", RecItemJnlLine."Bin Code");
             PackageNoInfo.SetRange(Inventory, 0);
             if PackageNoInfo.FindFirst() then begin
-                SerLotPkgArr[1] := PackageNoInfo."PMP04 Bin Code";
+                // SerLotPkgArr[1] := PackageNoInfo."PMP04 Bin Code";
                 SerLotPkgArr[2] := PackageNoInfo."PMP04 Lot No.";
                 SerLotPkgArr[3] := PackageNoInfo."Package No.";
+
+                if SerLotPkgArr[2] = '' then begin
+                    SerLotPkgArr[2] := SortProdOrderRec."Lot No.";
+                end;
+                InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SortProdOrderRec, SerLotPkgArr);
+            end else begin
+                SerLotPkgArr[2] := SortProdOrderRec."Lot No.";
+                SerLotPkgArr[3] := SortProdOrderRec."Package No.";
                 InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SortProdOrderRec, SerLotPkgArr);
             end;
         end;
@@ -1860,7 +2610,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         RecReservEntry."Creation Date" := Today();
     end;
 
-    // // Determines and assigns the appropriate item tracking type to the reservation entry based on the presence of lot, serial, and package numbers.
+    ///<summary>Determines and assigns the appropriate item tracking type to the reservation entry based on the presence of lot, serial, and package numbers.</summary>
     local procedure GetRecReservEntryItemTrackingEnum(var RecReservEntry: Record "Reservation Entry"; LotNo: Code[50]; SerialNo: Code[50]; PackageNo: Code[50])
     var
         myInt: Integer;
@@ -1933,7 +2683,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     var
         ExtCompanySetup: Record "PMP07 Extended Company Setup";
         ItemJnlBatch: Record "Item Journal Batch";
-    // IJL: Record "Item Journal Line";
+        NoSeriesMgmt: Codeunit "No. Series - Batch";
     begin
         ExtCompanySetup.Get();
         ItemJnlBatch.Reset();
@@ -1945,7 +2695,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     ItemJnlLine := tempItemJnlLine;
                     if ItemJnlBatch.Get(ExtCompanySetup."PMP15SORItemReclass.Jnl.Tmpt.", ExtCompanySetup."PMP15SORItemReclass.Jnl.Batch") then begin
                         if ItemJnlBatch."No. Series" <> '' then begin
-                            ItemJnlLine."Document No." := NoSeriesBatchMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                            ItemJnlLine."Document No." := NoSeriesMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
                         end;
                     end;
                 end;
@@ -1959,7 +2709,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                                     ItemJnlLine := tempItemJnlLine;
                                     if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch") then begin
                                         if ItemJnlBatch."No. Series" <> '' then begin
-                                            ItemJnlLine."Document No." := NoSeriesBatchMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                                            ItemJnlLine."Document No." := NoSeriesMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
                                         end;
                                     end;
                                 end else begin
@@ -1967,7 +2717,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                                     ItemJnlLine := tempItemJnlLine;
                                     if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Output Jnl. Template", ExtCompanySetup."PMP15 SOR Output Jnl. Batch") then begin
                                         if ItemJnlBatch."No. Series" <> '' then begin
-                                            ItemJnlLine."Document No." := NoSeriesBatchMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                                            ItemJnlLine."Document No." := NoSeriesMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
                                         end;
                                     end;
                                 end;
@@ -1979,7 +2729,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                                     ItemJnlLine := tempItemJnlLine;
                                     if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch") then begin
                                         if ItemJnlBatch."No. Series" <> '' then begin
-                                            ItemJnlLine."Document No." := NoSeriesBatchMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                                            ItemJnlLine."Document No." := NoSeriesMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
                                         end;
                                     end;
                                 end else begin
@@ -1987,7 +2737,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                                     ItemJnlLine := tempItemJnlLine;
                                     if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Output Jnl. Template", ExtCompanySetup."PMP15 SOR Output Jnl. Batch") then begin
                                         if ItemJnlBatch."No. Series" <> '' then begin
-                                            ItemJnlLine."Document No." := NoSeriesBatchMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                                            ItemJnlLine."Document No." := NoSeriesMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
                                         end;
                                     end;
                                 end;
@@ -1999,7 +2749,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                                     ItemJnlLine := tempItemJnlLine;
                                     if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch") then begin
                                         if ItemJnlBatch."No. Series" <> '' then begin
-                                            ItemJnlLine."Document No." := NoSeriesBatchMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                                            ItemJnlLine."Document No." := NoSeriesMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
                                         end;
                                     end;
                                 end else begin
@@ -2007,7 +2757,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                                     ItemJnlLine := tempItemJnlLine;
                                     if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Output Jnl. Template", ExtCompanySetup."PMP15 SOR Output Jnl. Batch") then begin
                                         if ItemJnlBatch."No. Series" <> '' then begin
-                                            ItemJnlLine."Document No." := NoSeriesBatchMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                                            ItemJnlLine."Document No." := NoSeriesMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
                                         end;
                                     end;
                                 end;
@@ -2025,7 +2775,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         ItemJnlLine := tempItemJnlLine;
                         if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Consum.Jnl. Template", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch") then begin
                             if ItemJnlBatch."No. Series" <> '' then begin
-                                ItemJnlLine."Document No." := NoSeriesBatchMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                                ItemJnlLine."Document No." := NoSeriesMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
                             end;
                         end;
                     end else begin
@@ -2033,7 +2783,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         ItemJnlLine := tempItemJnlLine;
                         if ItemJnlBatch.Get(ExtCompanySetup."PMP15 SOR Output Jnl. Template", ExtCompanySetup."PMP15 SOR Output Jnl. Batch") then begin
                             if ItemJnlBatch."No. Series" <> '' then begin
-                                ItemJnlLine."Document No." := NoSeriesBatchMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
+                                ItemJnlLine."Document No." := NoSeriesMgmt.GetNextNo(ItemJnlBatch."No. Series", SortProdOrderRec."Posting Date");
                             end;
                         end;
                     end;
@@ -2041,6 +2791,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
 
         end;
         ItemJnlLine.Insert();
+        ItemJnlLine.Mark(true);
     end;
 
     /// <summary>Inserts a new Sortation Detail Result record based on the Item Journal Line and validates its relationship to the Sortation Production Order.</summary>
@@ -2050,24 +2801,58 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     procedure InsertSORDetailResultfromItemJnlLine(var ItemJnlLine: Record "Item Journal Line"; SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary)
     var
         SORProdOrdDetLine: Record "PMP15 Sortation Detail Quality";
+        NextLineNo: Integer;
     begin
-        SORProdOrdDetLine.Init();
-        SORProdOrdDetLine.Validate("Item No.", ItemJnlLine."Item No.");
-        SORProdOrdDetLine.Validate("Variant Code", ItemJnlLine."Variant Code");
-        SORProdOrdDetLine.Validate("Package No.", ItemJnlLine."Package No.");
-        SORProdOrdDetLine.Validate("Lot No.", ItemJnlLine."Lot No.");
-        SORProdOrdDetLine.Validate("Sub Merk 1", ItemJnlLine."PMP15 Sub Merk 1");
-        SORProdOrdDetLine.Validate("Sub Merk 2", ItemJnlLine."PMP15 Sub Merk 2");
-        SORProdOrdDetLine.Validate("Sub Merk 3", ItemJnlLine."PMP15 Sub Merk 3");
-        SORProdOrdDetLine.Validate("Sub Merk 4", ItemJnlLine."PMP15 Sub Merk 4");
-        SORProdOrdDetLine.Validate("Sub Merk 5", ItemJnlLine."PMP15 Sub Merk 5");
-        SORProdOrdDetLine.Validate("L/R", ItemJnlLine."PMP15 L/R");
-        SORProdOrdDetLine.Validate(Quantity, ItemJnlLine.Quantity);
-        SORProdOrdDetLine.Validate("Unit of Measure Code", ItemJnlLine."Unit of Measure Code");
-        SORProdOrdDetLine.Validate(Rework, ItemJnlLine."PMP15 Rework");
-        SORProdOrdDetLine.Validate("Tobacco Type", ItemJnlLine."PMP15 Tobacco Type");
-        SORProdOrdDetLine.Insert();
-        Commit();
+        SORProdOrdDetLine.Reset();
+        SORProdOrdDetLine.SetCurrentKey("Item No.", "Variant Code", "Package No.", "Sub Merk 1", "Sub Merk 2", "Sub Merk 3", "Sub Merk 4", "Sub Merk 5");
+        SORProdOrdDetLine.SetRange("Item No.", ItemJnlLine."Item No.");
+        SORProdOrdDetLine.SetRange("Variant Code", ItemJnlLine."Variant Code");
+        SORProdOrdDetLine.SetRange("Package No.", ItemJnlLine."Package No.");
+        SORProdOrdDetLine.SetRange("Sub Merk 1", ItemJnlLine."PMP15 Sub Merk 1");
+        SORProdOrdDetLine.SetRange("Sub Merk 2", ItemJnlLine."PMP15 Sub Merk 2");
+        SORProdOrdDetLine.SetRange("Sub Merk 3", ItemJnlLine."PMP15 Sub Merk 3");
+        SORProdOrdDetLine.SetRange("Sub Merk 4", ItemJnlLine."PMP15 Sub Merk 4");
+        SORProdOrdDetLine.SetRange("Sub Merk 5", ItemJnlLine."PMP15 Sub Merk 5");
+        if SORProdOrdDetLine.FindLast() then begin
+            if ItemJnlLine."Entry Type" = ItemJnlLine."Entry Type"::Output then
+                SORProdOrdDetLine.Quantity += ItemJnlLine."Output Quantity";
+            if ItemJnlLine."Entry Type" in [ItemJnlLine."Entry Type"::Consumption, ItemJnlLine."Entry Type"::Transfer] then
+                SORProdOrdDetLine.Quantity += ItemJnlLine.Quantity;
+            SORProdOrdDetLine.Modify();
+        end else begin
+            SORProdOrdDetLine.Reset();
+            SORProdOrdDetLine.LockTable();
+            SORProdOrdDetLine.SetRange("Item No.", ItemJnlLine."Item No.");
+            SORProdOrdDetLine.SetRange("Variant Code", ItemJnlLine."Variant Code");
+            SORProdOrdDetLine.SetRange("Package No.", ItemJnlLine."Package No.");
+            if SORProdOrdDetLine.FindLast() then
+                NextLineNo := SORProdOrdDetLine."Entry No." + 10000
+            else
+                NextLineNo := 10000;
+
+            SORProdOrdDetLine.Init();
+            SORProdOrdDetLine.Validate("Item No.", ItemJnlLine."Item No.");
+            SORProdOrdDetLine.Validate("Variant Code", ItemJnlLine."Variant Code");
+            SORProdOrdDetLine.Validate("Package No.", ItemJnlLine."Package No.");
+            SORProdOrdDetLine."Entry No." := NextLineNo;
+            SORProdOrdDetLine.Validate("Lot No.", ItemJnlLine."Lot No.");
+            SORProdOrdDetLine.Validate("Sub Merk 1", ItemJnlLine."PMP15 Sub Merk 1");
+            SORProdOrdDetLine.Validate("Sub Merk 2", ItemJnlLine."PMP15 Sub Merk 2");
+            SORProdOrdDetLine.Validate("Sub Merk 3", ItemJnlLine."PMP15 Sub Merk 3");
+            SORProdOrdDetLine.Validate("Sub Merk 4", ItemJnlLine."PMP15 Sub Merk 4");
+            SORProdOrdDetLine.Validate("Sub Merk 5", ItemJnlLine."PMP15 Sub Merk 5");
+            SORProdOrdDetLine.Validate("L/R", ItemJnlLine."PMP15 L/R");
+            // SORProdOrdDetLine.Validate(Quantity, ItemJnlLine.Quantity);
+            if ItemJnlLine."Entry Type" = ItemJnlLine."Entry Type"::Output then
+                SORProdOrdDetLine.Validate(Quantity, ItemJnlLine."Output Quantity");
+            if ItemJnlLine."Entry Type" in [ItemJnlLine."Entry Type"::Consumption, ItemJnlLine."Entry Type"::Transfer] then
+                SORProdOrdDetLine.Validate(Quantity, ItemJnlLine.Quantity);
+            SORProdOrdDetLine.Validate("Unit of Measure Code", ItemJnlLine."Unit of Measure Code");
+            SORProdOrdDetLine.Validate(Rework, ItemJnlLine."PMP15 Rework");
+            SORProdOrdDetLine.Validate("Tobacco Type", ItemJnlLine."PMP15 Tobacco Type");
+            SORProdOrdDetLine.Insert();
+        end;
+        // Commit();
 
         CheckPkgNoInfoAbletoSell(SORProdOrdDetLine, SortProdOrderRec);
     end;
@@ -2080,19 +2865,10 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     var
         PkgNoInfoList: Record "Package No. Information";
         SDR: Record "PMP15 Sortation Detail Quality";
-        // Submerk1Rec: Record "PMP15 Sub Merk 1";
-        // Submerk2Rec: Record "PMP15 Sub Merk 2";
-        // Submerk3Rec: Record "PMP15 Sub Merk 3";
-        // Submerk4Rec: Record "PMP15 Sub Merk 4";
-        // Submerk5Rec: Record "PMP15 Sub Merk 5";
         SubmerkGroups, SubmerkCodes : array[5] of Code[50];
         IsAbletoSell, IsMixed : Boolean;
         BiggestCode, SmallestCode : Integer;
     begin
-        // Submerk2Rec.Reset();
-        // Submerk3Rec.Reset();
-        // Submerk4Rec.Reset();
-        // Submerk5Rec.Reset();
         PkgNoInfoList.Reset();
         SDR.Reset();
         Clear(SubmerkGroups);
@@ -2104,38 +2880,74 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         PkgNoInfoList.SetRange("Variant Code", SORProdOrdDetLine."Variant Code");
         PkgNoInfoList.SetRange("Package No.", SORProdOrdDetLine."Package No.");
         if PkgNoInfoList.FindFirst() then begin
-            GetSubmerkGROUPfromSORPrdOrdDetLine(SubmerkGroups, SORProdOrdDetLine); // To be used in "IS ABLE TO SELL" region
             #region IS ABLE TO SELL
-            // If there is combination of Sub Merk 2 & Sub Merk 3 on SDR that has different Group (Group field is available on Sub Merk 3 Table) then field able to sell on PANI will be false.
-            IsAbletoSell := SubmerkGroups[2] = SubmerkGroups[3];
+            // Persyaratan 1 & 2 ITERATIVE
 
-            // Then check combination of Sub Merk 4 on SDR if there is SDR that has different Group (Group field is available on Sub Merk 4 table) then field able to sell on PANI will be false.
-            if IsAbletoSell then begin
-                IsAbletoSell := IsAbletoSell AND
-                    (SubmerkGroups[3] = SubmerkGroups[4]) AND
-                    (SubmerkGroups[2] = SubmerkGroups[4]);
-            end;
+            SDR.Reset();
+            SDR.SetRange("Item No.", PkgNoInfoList."Item No.");
+            SDR.SetRange("Variant Code", PkgNoInfoList."Variant Code");
+            SDR.SetRange("Package No.", PkgNoInfoList."Package No.");
+            if SDR.FindSet() then
+                repeat
+                    GetSubmerkGROUPfromSORPrdOrdDetLine(SubmerkGroups, SDR); // To be used in "IS ABLE TO SELL" region
+                    // If there is combination of Sub Merk 2 & Sub Merk 3 on SDR that has different Group (Group field is available on Sub Merk 3 Table) then field able to sell on PANI will be false.
+                    IsAbletoSell := SubmerkGroups[2] = SubmerkGroups[3];
+
+                    // Then check combination of Sub Merk 4 on SDR if there is SDR that has different Group (Group field is available on Sub Merk 4 table) then field able to sell on PANI will be false.
+                    if IsAbletoSell then begin
+                        IsAbletoSell := IsAbletoSell AND
+                            (SubmerkGroups[3] = SubmerkGroups[4]) AND
+                            (SubmerkGroups[2] = SubmerkGroups[4]);
+                    end;
+                until (SDR.Next() = 0) OR not IsAbletoSell;
+
+            // if IsAbletoSell then begin
+            //     SDR.SetCurrentKey("Sub Merk 5", "Item No.", "Variant Code", "Package No.");
+            //     SDR.SetRange("Item No.", PkgNoInfoList."Item No.");
+            //     SDR.SetRange("Variant Code", PkgNoInfoList."Variant Code");
+            //     SDR.SetRange("Package No.", PkgNoInfoList."Package No.");
+            //     SDR.SetAscending("Sub Merk 5", true);
+            //     if SDR.FindLast() then
+            //         SetSubmerkCodes(SubmerkCodes, SDR."Sub Merk 1", SDR."Sub Merk 2", SDR."Sub Merk 3", SDR."Sub Merk 4", SDR."Sub Merk 5");
+            //     GetMinMaxSubMerkFromList(SubmerkCodes, SmallestCode, BiggestCode);
+            //     IsAbletoSell := IsAbletoSell AND ((BiggestCode - SmallestCode) > 1);
+            // end;
+            // 
+            // if IsAbletoSell then begin
+            //     SDR.Reset();
+            //     SDR.SetRange("Item No.", PkgNoInfoList."Item No.");
+            //     SDR.SetRange("Variant Code", PkgNoInfoList."Variant Code");
+            //     SDR.SetRange("Package No.", PkgNoInfoList."Package No.");
+            //     IsAbletoSell := IsAbletoSell AND CheckQtySDRIsBiggerThan(SDR, 35);
+            // end;
 
             // Then check combination of Sub Merk 5 on Sortation Detail Result if the biggest - the lowest > 1 then field able to sell on Package No. Information will be false.
-            if IsAbletoSell then begin
-                SDR.SetCurrentKey("Sub Merk 5", "Item No.", "Variant Code", "Package No.");
-                SDR.SetRange("Item No.", PkgNoInfoList."Item No.");
-                SDR.SetRange("Variant Code", PkgNoInfoList."Variant Code");
-                SDR.SetRange("Package No.", PkgNoInfoList."Package No.");
-                SDR.SetAscending("Sub Merk 5", true);
-                if SDR.FindLast() then
-                    SetSubmerkCodes(SubmerkCodes, SDR."Sub Merk 1", SDR."Sub Merk 2", SDR."Sub Merk 3", SDR."Sub Merk 4", SDR."Sub Merk 5");
-                GetMinMaxSubMerkFromList(SubmerkCodes, SmallestCode, BiggestCode);
-                IsAbletoSell := IsAbletoSell AND ((BiggestCode - SmallestCode) > 1);
-            end;
-
-            // If not, then check total quantity on Sortation Detail Result >= 35 if yes then set field able to sell on Package No. Information to True. If not, then set to False.
             if IsAbletoSell then begin
                 SDR.Reset();
                 SDR.SetRange("Item No.", PkgNoInfoList."Item No.");
                 SDR.SetRange("Variant Code", PkgNoInfoList."Variant Code");
                 SDR.SetRange("Package No.", PkgNoInfoList."Package No.");
-                IsAbletoSell := IsAbletoSell AND CheckQtySDRIsBiggerThan(SDR, 35);
+                if SDR.Count > 1 then begin
+                    IsAbletoSell := IsAbletoSell AND not (CalcSubmerk5MinMaxDifference(SORProdOrdDetLine) > 1);
+
+                    // if CalcSubmerk5MinMaxDifference(SORProdOrdDetLine) > 1 then
+                    //     IsAbletoSell := false
+                    // else
+                    //     IsAbletoSell := true;
+                end;
+            end;
+
+            // If not, then check total quantity on Sortation Detail Result >= 35 if yes then set field able to sell on Package No. Information to True. If not, then set to False.
+            if IsAbletoSell then begin
+                SDR.Reset();
+                SDR.SetCurrentKey("Item No.", "Variant Code", "Package No.");
+                SDR.SetRange("Item No.", SORProdOrdDetLine."Item No.");
+                SDR.SetRange("Variant Code", SORProdOrdDetLine."Variant Code");
+                SDR.SetRange("Package No.", SORProdOrdDetLine."Package No.");
+                SDR.CalcSums(Quantity);
+                IsAbletoSell := IsAbletoSell AND (SDR.Quantity > 35);
+                // if SDR.Quantity < 35 then
+                //     IsAbletoSell := false;
             end;
             #endregion IS ABLE TO SELL
 
@@ -2143,11 +2955,11 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             // b) If there is different of Sub Merk 1, Sub Merk 2, Sub Merk 3, Sub Merk 4, Sub Merk 5 on Sortation Detail Result then set field Mixed to be True. If all the same then set field Mixed to be False
             if SDR.FindSet() then
                 repeat
-                    if (SDR."Sub Merk 1" <> SDR."Sub Merk 1") or
-                    (SDR."Sub Merk 2" <> SDR."Sub Merk 2") or
-                    (SDR."Sub Merk 3" <> SDR."Sub Merk 3") or
-                    (SDR."Sub Merk 4" <> SDR."Sub Merk 4") or
-                    (SDR."Sub Merk 5" <> SDR."Sub Merk 5") then begin
+                    if (SORProdOrdDetLine."Sub Merk 1" <> SDR."Sub Merk 1") or
+                    (SORProdOrdDetLine."Sub Merk 2" <> SDR."Sub Merk 2") or
+                    (SORProdOrdDetLine."Sub Merk 3" <> SDR."Sub Merk 3") or
+                    (SORProdOrdDetLine."Sub Merk 4" <> SDR."Sub Merk 4") or
+                    (SORProdOrdDetLine."Sub Merk 5" <> SDR."Sub Merk 5") then begin
                         IsMixed := true;
                     end;
                 until (SDR.Next() = 0) OR IsMixed;
@@ -2156,6 +2968,21 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             Clear(SubmerkCodes);
             GetSubmerkforBiggestRank(SubmerkCodes, PkgNoInfoList."Item No.", PkgNoInfoList."Variant Code", PkgNoInfoList."Package No.");
 
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+            // net weight = sum (quantity pada sor detail result)
+            // gross weight = sum (quantity pada sor detail result) + tarre weight dari prod. order recording + allowance packing  weight dari prod. order recording
+            SDR.Reset();
+            SDR.SetCurrentKey("Item No.", "Variant Code", "Package No.");
+            SDR.SetRange("Item No.", SORProdOrdDetLine."Item No.");
+            SDR.SetRange("Variant Code", SORProdOrdDetLine."Variant Code");
+            SDR.SetRange("Package No.", SORProdOrdDetLine."Package No.");
+            SDR.CalcSums(Quantity);
+            PkgNoInfoList."PMP04 Nett Weight (Kgs)" := SDR.Quantity;
+            PkgNoInfoList."PMP04 Gross Weight (Kgs)" := PkgNoInfoList."PMP04 Nett Weight (Kgs)" + SortProdOrderRec."Tarre Weight" + SortProdOrderRec."Allowance Packing Weight";
+
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+            PkgNoInfoList."PMP04 Bale Number" := PkgNoInfoList."Package No.";
             PkgNoInfoList."PMP15 Able to Sell" := IsAbletoSell;
             PkgNoInfoList."PMP15 Mixed" := IsMixed;
             PkgNoInfoList."PMP04 Sub Merk 1" := SubmerkCodes[1];
@@ -2168,6 +2995,51 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             PkgNoInfoList.Modify();
         end;
     end;
+
+    /// <summary>Calculates difference between max and min numeric values found in "PMP04 Sub Merk 5" for all SDR records with same Item/Variant/Package.</summary>
+    /// <param name="SDRRec">The source "PMP15 Sortation Detail Quality" record used to identify group.</param>
+    local procedure CalcSubmerk5MinMaxDifference(var SDRRec: Record "PMP15 Sortation Detail Quality") Difference: Integer
+    var
+        SDR: Record "PMP15 Sortation Detail Quality";
+        ConvertedVal: Integer;
+        HasNumber: Boolean;
+        MinVal: Integer;
+        MaxVal: Integer;
+    begin
+        HasNumber := false;
+        MinVal := 0;
+        MaxVal := 0;
+
+        SDR.Reset();
+        SDR.SetRange("Item No.", SDRRec."Item No.");
+        SDR.SetRange("Variant Code", SDRRec."Variant Code");
+        SDR.SetRange("Package No.", SDRRec."Package No.");
+
+        if SDR.FindSet() then
+            repeat
+                if SDR."Sub Merk 5" <> '' then begin
+                    if Evaluate(ConvertedVal, SDR."Sub Merk 5") then begin
+                        if not HasNumber then begin
+                            MinVal := ConvertedVal;
+                            MaxVal := ConvertedVal;
+                            HasNumber := true;
+                        end else begin
+                            if ConvertedVal < MinVal then
+                                MinVal := ConvertedVal;
+                            if ConvertedVal > MaxVal then
+                                MaxVal := ConvertedVal;
+                        end;
+                    end;
+                end;
+            until SDR.Next() = 0;
+
+        if not HasNumber then
+            exit(0);
+
+        Difference := MaxVal - MinVal;
+        exit(Difference);
+    end;
+    // ...existing code...
 
     /// <summary>Creates new Sortation Production Order Lines and initializes related routing lines.</summary>
     /// <remarks> Generates new production order lines based on Sortation data, copying key fields such as item, variant, quantity, and routing info.  Also supports creating a new routing line with default time values to maintain process consistency. </remarks>
@@ -2183,6 +3055,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         PrOL.Reset();
         Clear(LastLineNo);
 
+        PrOL.SetRange(Status, PrOL.Status::Released);
         PrOL.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
         if PrOL.FindLast() then begin
             LastLineNo := PrOL."Line No.";
@@ -2194,13 +3067,15 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             LastLineNo += 10000;
         end;
 
+        ProdOrdLine2.Reset();
         ProdOrdLine2.Init();
-        ProdOrdLine2.Validate("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-        ProdOrdLine2.Validate("Line No.", LastLineNo);
+        ProdOrdLine2.Status := ProdOrdLine.Status::Released;
+        ProdOrdLine2."Prod. Order No." := SortProdOrderRec."Sortation Prod. Order No.";
+        ProdOrdLine2."Line No." := LastLineNo;
         ProdOrdLine2.Validate("Item No.", CHOSENItem."Item No.");
         ProdOrdLine2.Validate("Variant Code", CHOSENItem."Variant Code");
         ProdOrdLine2.Validate("Location Code", ProdOrdLine."Location Code");
-        ProdOrdLine2.Validate("Bin Code", ProdOrdLine."Bin Code");
+        ProdOrdLine2."Bin Code" := ProdOrdLine."Bin Code";
         ProdOrdLine2.Validate(Quantity, SortProdOrderRec.Quantity);
         ProdOrdLine2.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
         ProdOrdLine2.Validate("Routing No.", ProdOrdLine."Routing No.");
@@ -2230,12 +3105,13 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         end;
 
         ProdOrdLine2.Init();
-        ProdOrdLine2.Validate("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-        ProdOrdLine2.Validate("Line No.", LastLineNo);
+        ProdOrdLine2.Status := ProdOrdLine2.Status::Released;
+        ProdOrdLine2."Prod. Order No." := SortProdOrderRec."Sortation Prod. Order No.";
+        ProdOrdLine2."Line No." := LastLineNo;
         ProdOrdLine2.Validate("Item No.", SortProdOrderRec."Sorted Item No.");
         ProdOrdLine2.Validate("Variant Code", SortProdOrderRec."Variant Changes");
         ProdOrdLine2.Validate("Location Code", ProdOrdLine."Location Code");
-        ProdOrdLine2.Validate("Bin Code", ProdOrdLine."Bin Code");
+        ProdOrdLine2."Bin Code" := ProdOrdLine."Bin Code";
         ProdOrdLine2.Validate(Quantity, SortProdOrderRec.Quantity);
         ProdOrdLine2.Validate("Unit of Measure Code", SortProdOrderRec."Unit of Measure Code");
         ProdOrdLine2.Validate("Routing No.", ProdOrdLine."Routing No.");
@@ -2246,19 +3122,35 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     /// <remarks> Initializes and inserts a routing line linked to the source production order line with zeroed time values. </remarks>
     /// <param name="ProdOrdRoutLine">The production order routing line to be created and inserted.</param>
     /// <param name="ProdOrdLine">The reference production order line providing base data.</param>
-    procedure CreateNEwProdOrdRoutingLinefromProdOrdLine(var ProdOrdRoutLine: Record "Prod. Order Routing Line"; ProdOrdLine: Record "Prod. Order Line")
+    procedure CreateNEwProdOrdRoutingLinefromProdOrdLine(var ProdOrdRoutLine2: Record "Prod. Order Routing Line"; ProdOrdLine2: Record "Prod. Order Line"; ProdOrdLine1: Record "Prod. Order Line")
+    var
+        ProdOrdRoutLine1: Record "Prod. Order Routing Line";
     begin
-        ProdOrdRoutLine.Init();
-        // ProdOrdRoutLine.Validate(Status, ProdOrdLine.Status);
-        ProdOrdRoutLine.Validate("Prod. Order No.", ProdOrdLine."Prod. Order No.");
-        ProdOrdRoutLine.Validate("Run Time", 0);
-        ProdOrdRoutLine.Validate("Setup Time", 0);
-        ProdOrdRoutLine.Validate("Wait Time", 0);
-        ProdOrdRoutLine.Validate("Move Time", 0);
-        ProdOrdRoutLine.Insert();
+        ProdOrdRoutLine1.Reset();
+        ProdOrdRoutLine1.SetRange("Prod. Order No.", ProdOrdLine1."Prod. Order No.");
+        ProdOrdRoutLine1.SetRange(Status, ProdOrdLine1.Status);
+        ProdOrdRoutLine1.SetRange("Routing Reference No.", ProdOrdLine1."Routing Reference No.");
+        ProdOrdRoutLine1.SetRange("Routing No.", ProdOrdLine1."Routing No.");
+        if ProdOrdRoutLine1.FindFirst() then begin
+            ProdOrdRoutLine2.Init();
+            ProdOrdRoutLine2.Status := ProdOrdLine2.Status;
+            ProdOrdRoutLine2."Routing No." := ProdOrdRoutLine1."Routing No.";
+            ProdOrdRoutLine2."Prod. Order No." := ProdOrdLine2."Prod. Order No.";
+            ProdOrdRoutLine2."Routing Reference No." := ProdOrdLine2."Line No.";
+            ProdOrdRoutLine2."Operation No." := ProdOrdRoutLine1."Operation No.";
+            ProdOrdRoutLine2.Type := ProdOrdRoutLine1.Type;
+            ProdOrdRoutLine2."No." := ProdOrdRoutLine1."No.";
+            ProdOrdRoutLine2.Description := ProdOrdRoutLine1.Description;
+            ProdOrdRoutLine2."Run Time" := 0;
+            ProdOrdRoutLine2."Setup Time" := 0;
+            ProdOrdRoutLine2."Wait Time" := 0;
+            ProdOrdRoutLine2."Move Time" := 0;
+            ProdOrdRoutLine2.Insert();
+        end;
+
     end;
 
-    // Checks if an existing Assembly Order with matching item, variant, location, date, and production details already exists, returning true if found.
+    ///<summary>Checks if an existing Assembly Order with matching item, variant, location, date, and production details already exists, returning true if found.</summary>
     local procedure IsASOFoundExisting(var AssemblyHeader: Record "Assembly Header"): Boolean
     var
         ASO: Record "Assembly Header";
@@ -2290,10 +3182,12 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     /// <param name="ProdOrder">The Production Order record that is the source or target of the sortation processing.</param>
     /// <param name="SortProdOrderRec">Temporary PMP15 Sortation Production Order Recording that contains the sortation details to be processed.</param>
     /// <param name="SORStep_Step">The Sortation Step Enum value indicating which processing branch to execute.</param>
-    procedure SortProdOrdRecordingPost(var ProdOrder: Record "Production Order"; SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary; SORStep_Step: Enum "PMP15 Sortation Step Enum")
+    // LA TEMPORAIRE | parameter IsSuppressCommit should be removed in Proudction
+    procedure SortProdOrdRecordingPost(var ProdOrder: Record "Production Order"; var SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary; SORStep_Step: Enum "PMP15 Sortation Step Enum"; IsSuppressCommit: Boolean)
     var
-        // PkgNoRec: Record "Package No. Information";
+        AssemblyPostMgmt: Codeunit "Assembly-Post";
         SORStepEnum: Enum "PMP15 Sortation Step Enum";
+        ProdCompItemTypeQuery: Query "PMP15Prod-Comp. ItemType Query";
         ExtCompanySetup: Record "PMP07 Extended Company Setup";
         AssemblyHeader: Record "Assembly Header";       // ASSEMBLY
         AssemblyLine: Record "Assembly Line";           // ASSEMBLY
@@ -2331,23 +3225,29 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         case SORStep_Step of
             SORStep_Step::"0":
                 begin
+                    #region SOR REC POST | STEP 0
                     GetProdOrderCropfromPkgNoInfo(ProdOrder, SortProdOrderRec."Package No.");
                     CreateAssemblyHeadfromSORRecording(AssemblyHeader, ProdOrder, SortProdOrderRec, SORStep_Step);
-                    if not IsASOFoundExisting(AssemblyHeader) then begin
-                        CreateAssemblyLinefromSORRecording(AssemblyLine, AssemblyHeader, ProdOrder, SortProdOrderRec);
-
-                        GenerateItemReservEntryAssemblyHeader(AssemblyHeader, ProdOrder, SortProdOrderRec);
-                        GenerateItemTrackingAssemblyLine(AssemblyHeader, ProdOrder, SortProdOrderRec);
-                        // Commit(); //
+                    if IsASOFoundExisting(AssemblyHeader) then begin
+                        DeleteAllAssemblyLineinDocumentOrder(AssemblyHeader);
                     end;
+                    CreateAssemblyLinefromSORRecording(AssemblyLine, AssemblyHeader, ProdOrder, SortProdOrderRec);
 
-                    if AssemblyPostMgmt.Run(AssemblyHeader) then
-                        Message('The sortation production order posting in the %1-Step for Assembly Item %2  is successfully posted.', SORStep_Step, SortProdOrderRec."Unsorted Item No.")
-                    else
-                        Message('The sortation production order posting in the %1-Step for Assembly Item %2  is failed to posting.', SORStep_Step, SortProdOrderRec."Unsorted Item No.");
+                    GenerateItemReservEntryAssemblyHeader(AssemblyHeader, ProdOrder, SortProdOrderRec);
+                    GenerateItemTrackingAssemblyLine(AssemblyHeader, ProdOrder, SortProdOrderRec);
+                    // Commit(); //
+                    // Error('HALT');
+
+                    AssemblyPostMgmt.Run(AssemblyHeader);
+                    // if AssemblyPostMgmt.Run(AssemblyHeader) then
+                    Message('The sortation production order posting in the %1-Step for Assembly Item %2  is successfully posted.', SORStep_Step, SortProdOrderRec."Unsorted Item No.")
+                    // else
+                    // Message('The sortation production order posting in the %1-Step for Assembly Item %2  is failed to posting.', SORStep_Step, SortProdOrderRec."Unsorted Item No.");
+                    #endregion SOR REC POST | STEP 0
                 end;
             SORStep_Step::"1", SORStep_Step::"2", SORStep_Step::"3":
                 begin
+                    #region SOR REC POST | STEP 1-3
                     ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15SORItemReclass.Jnl.Tmpt.");
                     ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15SORItemReclass.Jnl.Batch");
                     ItemJnlLine.SetRange("PMP15 Marked", true);
@@ -2359,260 +3259,386 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
                         // Commit(); //
                     end;
-                    PostItemReclassJnlSOR(ItemJnlLine, SortProdOrderRec);
+                    ItemJnlLine.MarkedOnly(true);
+                    PostItemReclassJnlSOR(SortProdOrderRec, ItemJnlLine);
+                    #endregion SOR REC POST | STEP 1-3
                 end;
             SORStep_Step::"4":
                 begin
-                    case SortProdOrderRec."Tobacco Type" of
-                        SortProdOrderRec."Tobacco Type"::Wrapper:
-                            begin
-                                // OUTPUT JOURNAL
-                                ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
-                                ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
-                                ItemJnlLine.SetRange("PMP15 Marked", true);
-                                if ItemJnlLine.FindLast() OR (ItemJnlLine.Count = 0) then begin // As Validation before insertion
-                                    IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
-                                end;
-                                if IsSuccessInsertItemJnlLine then begin
-                                    ItemJnlLine.Reset();
-                                    InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
-                                    GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
-                                    // Commit(); //
-                                    ItemJnlLine2 := ItemJnlLine;
-                                    ItemJnlLine.PostingItemJnlFromProduction(false);
-                                    Commit();
-                                    InsertSORDetailResultfromItemJnlLine(ItemJnlLine2, SortProdOrderRec);
-
-                                    Clear(IsSuccessInsertItemJnlLine);
-                                    ItemJnlLine2.Reset();
-                                    tempItemJnlLine.DeleteAll();
-                                end else
-                                    Error('Failed to creating the Output Journal before posting.');
-
-                                // CONSUMPTION JOURNAL
-                                ItemJnlLine2.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Template");
-                                ItemJnlLine2.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch");
-                                ItemJnlLine2.SetRange("PMP15 Marked", true);
-                                if ItemJnlLine2.FindLast() OR (ItemJnlLine2.Count = 0) then begin // As Validation before insertion
-                                    IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
-                                end;
-                                if IsSuccessInsertItemJnlLine then begin
-                                    ItemJnlLine2.Reset();
-                                    InsertItemJnlLinefromTemp(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
-                                    GenerateRecReserveEntryItemJnlLine(ItemJnlLine2, SortProdOrderRec);
-                                    // Commit(); //
-                                    ItemJnlLine2.PostingItemJnlFromProduction(false);
-                                    Message('The sortation production order posting in the %1-th Step for %2 Tobacco Type is successfully posted.', SORStep_Step, SortProdOrderRec."Tobacco Type");
-                                end else
-                                    Error('Failed to creating the Consumption Journal after posting the Output Journal.');
-                            end;
-                        SortProdOrderRec."Tobacco Type"::PW:
-                            begin
-                                ProdOrdLine.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                                ProdOrdLine.SetRange("Item No.", SortProdOrderRec."Sorted Item No.");
-                                ProdOrdLine.SetFilter("Variant Code", SortProdOrderRec."Sorted Variant Code");
-                                if ProdOrdLine.FindFirst() then begin
-                                    ItemProdType.SetRange("Production Item Type", ItemProdType."Production Item Type"::"Sortation-Sorted PW");
-                                    if not ItemProdType.FindFirst() then
-                                        Error('No Item Production Type configuration was found for Production Item Type "%1". Please ensure that the Item Production Type master data has been properly maintained for Sortation processing.', ItemProdType."Production Item Type"::"Sortation-Sorted PW");
-
-                                    ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                                    ProdOrdComp.SetRange("Prod. Order Line No.", ProdOrdLine."Line No.");
-                                    if ProdOrdComp.FindSet() then
-                                        repeat
-                                            if Item.Get(ProdOrdComp."Item No.") then begin
-                                                if (Item."PMP04 Item Group" = ItemProdType."Item Group") and (Item."Item Category Code" = ItemProdType."Item Category Code") and (Item."PMP04 Item Class L1" = ItemProdType."Item Class L1") and (Item."PMP04 Item Class L2" = ItemProdType."Item Class L2") and (Item."PMP04 Item Type L1" = ItemProdType."Item Type L1") and (Item."PMP04 Item Type L2" = ItemProdType."Item Type L2") and (Item."PMP04 Item Type L3" = ItemProdType."Item Type L3") then begin
-                                                    PWItem := ProdOrdComp;
-                                                    IsPWItemFound := true;
-                                                end;
-                                            end;
-                                        until (ProdOrdComp.Next() = 0) OR IsPWItemFound;
-                                end;
-
-                                if IsPWItemFound then begin
-                                    ProdOrdLine2.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                                    ProdOrdLine2.SetRange("Item No.", PWItem."Item No.");
-                                    ProdOrdLine2.SetRange("Variant Code", PWItem."Variant Code");
-                                    if ProdOrdLine2.FindFirst() then begin
-                                        // If found then go to step 5)
-                                    end else begin
-                                        // If not found then go to step 3)
-                                        CreateNewSORProdOrdLine(ProdOrdLine2, SortProdOrderRec, PWItem, ProdOrdLine);
-                                        CreateNEwProdOrdRoutingLinefromProdOrdLine(ProdOrdRoutLine, ProdOrdLine);
+                    if SortProdOrderRec."Variant Changes" = '' then begin
+                        case SortProdOrderRec."Tobacco Type" of
+                            SortProdOrderRec."Tobacco Type"::Wrapper:
+                                begin
+                                    #region SOR REC POST | STEP 4 WRAPPER
+                                    // OUTPUT JOURNAL
+                                    ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
+                                    ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
+                                    ItemJnlLine.SetRange("PMP15 Marked", true);
+                                    if ItemJnlLine.FindLast() OR (ItemJnlLine.Count = 0) then begin // As Validation before insertion
+                                        IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine."Entry Type"::Output);
                                     end;
-                                end else
-                                    Error('Failed to identify a valid PW Item for the current Sortation process. Item : %1 (%2) | Production Order : %3 | Please ensure that the correct PW Item is configured in the Production Order Component lines and meets the required classification rules defined in the Item Production Type.', SortProdOrderRec."Sorted Item No.", SortProdOrderRec."Sorted Variant Code", SortProdOrderRec."Sortation Prod. Order No.");
+                                    if IsSuccessInsertItemJnlLine then begin
+                                        ItemJnlLine.Reset();
+                                        InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
+                                        GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
+                                        // Commit(); //
+                                        // ItemJnlLine2 := ItemJnlLine;
+                                        // ItemJnlLine.PostingItemJnlFromProduction(false);
+                                        // InsertSORDetailResultfromItemJnlLine(ItemJnlLine, SortProdOrderRec);
 
-                                // OUTPUT JOURNAL
-                                ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
-                                ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
-                                ItemJnlLine.SetRange("PMP15 Marked", true);
-                                if ItemJnlLine.FindLast() OR (ItemJnlLine.Count = 0) then begin // As Validation before insertion
-                                    IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine."Entry Type"::Output, ProdOrdLine, ProdOrdRoutLine, ProdOrdComp);
-                                end;
-                                if IsSuccessInsertItemJnlLine then begin
-                                    ItemJnlLine.Reset();
-                                    InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
-                                    GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
-                                    ItemJnlLine2 := ItemJnlLine;
-                                    ItemJnlLine.PostingItemJnlFromProduction(false);
-                                    InsertSORDetailResultfromItemJnlLine(ItemJnlLine2, SortProdOrderRec);
+                                        Clear(IsSuccessInsertItemJnlLine);
+                                        // ItemJnlLine2.Reset();
+                                        tempItemJnlLine.DeleteAll();
+                                    end else
+                                        Error('Failed to creating the Output Journal before posting.');
 
-                                    Clear(IsSuccessInsertItemJnlLine);
-                                    ItemJnlLine2.Reset();
-                                    tempItemJnlLine.DeleteAll();
-                                end else
-                                    Error('Failed to creating the Output Journal before posting.');
-
-                                // CONSUMPTION JOURNAL
-                                ItemJnlLine2.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Template");
-                                ItemJnlLine2.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch");
-                                ItemJnlLine2.SetRange("PMP15 Marked", true);
-                                if ItemJnlLine2.FindLast() OR (ItemJnlLine2.Count = 0) then begin // As Validation before insertion
-                                    IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
-                                end;
-                                if IsSuccessInsertItemJnlLine then begin
-                                    ItemJnlLine2.Reset();
-                                    InsertItemJnlLinefromTemp(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
-                                    GenerateRecReserveEntryItemJnlLine(ItemJnlLine2, SortProdOrderRec);
-                                    ItemJnlLine2.PostingItemJnlFromProduction(false);
-                                    Message('The sortation production order posting in the %1-th Step for %2 Tobacco Type is successfully posted.', SORStep_Step, SortProdOrderRec."Tobacco Type");
-                                end else
-                                    Error('Failed to creating the Consumption Journal after posting the Output Journal.');
-                            end;
-                        SortProdOrderRec."Tobacco Type"::Filler:
-                            begin
-                                ProdOrdLine.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                                ProdOrdLine.SetRange("Item No.", SortProdOrderRec."Sorted Item No.");
-                                ProdOrdLine.SetFilter("Variant Code", SortProdOrderRec."Sorted Variant Code");
-                                if ProdOrdLine.FindFirst() then begin
-                                    ItemProdType.SetRange("Production Item Type", ItemProdType."Production Item Type"::"Sortation-Filler");
-                                    if not ItemProdType.FindFirst() then
-                                        Error('No Item Production Type configuration was found for Production Item Type "%1". Please ensure that the Item Production Type master data has been properly maintained for Sortation processing.', ItemProdType."Production Item Type"::"Sortation-Filler");
-
-                                    ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                                    ProdOrdComp.SetRange("Prod. Order Line No.", ProdOrdLine."Line No.");
-                                    if ProdOrdComp.FindSet() then
-                                        repeat
-                                            if Item.Get(ProdOrdComp."Item No.") then begin
-                                                if (Item."PMP04 Item Group" = ItemProdType."Item Group") and (Item."Item Category Code" = ItemProdType."Item Category Code") and (Item."PMP04 Item Class L1" = ItemProdType."Item Class L1") and (Item."PMP04 Item Class L2" = ItemProdType."Item Class L2") and (Item."PMP04 Item Type L1" = ItemProdType."Item Type L1") and (Item."PMP04 Item Type L2" = ItemProdType."Item Type L2") and (Item."PMP04 Item Type L3" = ItemProdType."Item Type L3") then begin
-                                                    FILLERItem := ProdOrdComp;
-                                                    IsFILLERItemFound := true;
-                                                end;
-                                            end;
-                                        until (ProdOrdComp.Next() = 0) OR IsFILLERItemFound;
-                                end;
-
-                                if IsFILLERItemFound then begin
-                                    ProdOrdLine2.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                                    ProdOrdLine2.SetRange("Item No.", FILLERItem."Item No.");
-                                    ProdOrdLine2.SetRange("Variant Code", FILLERItem."Variant Code");
-                                    if ProdOrdLine2.FindFirst() then begin
-                                        // If found then go to step 5)
-                                    end else begin
-                                        // If not found then go to step 3)
-                                        CreateNewSORProdOrdLine(ProdOrdLine2, SortProdOrderRec, FILLERItem, ProdOrdLine);
-                                        CreateNEwProdOrdRoutingLinefromProdOrdLine(ProdOrdRoutLine, ProdOrdLine);
+                                    // CONSUMPTION JOURNAL
+                                    ItemJnlLine2.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Template");
+                                    ItemJnlLine2.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch");
+                                    ItemJnlLine2.SetRange("PMP15 Marked", true);
+                                    if ItemJnlLine2.FindLast() OR (ItemJnlLine2.Count = 0) then begin // As Validation before insertion
+                                        IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
+                                        // IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
                                     end;
-                                end else
-                                    Error('Failed to identify a valid Filler Item for the current Sortation process. Item : %1 (%2) | Production Order : %3 | Please ensure that the correct Filler Item is configured in the Production Order Component lines and meets the required classification rules defined in the Item Production Type.', SortProdOrderRec."Sorted Item No.", SortProdOrderRec."Sorted Variant Code", SortProdOrderRec."Sortation Prod. Order No.");
-
-                                // OUTPUT JOURNAL
-                                ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
-                                ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
-                                ItemJnlLine.SetRange("PMP15 Marked", true);
-                                if ItemJnlLine.FindLast() OR (ItemJnlLine.Count = 0) then begin // As Validation before insertion
-                                    IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine."Entry Type"::Output, ProdOrdLine, ProdOrdRoutLine, FILLERItem);
+                                    if IsSuccessInsertItemJnlLine then begin
+                                        ItemJnlLine2.Reset();
+                                        InsertItemJnlLinefromTemp(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
+                                        GenerateRecReserveEntryItemJnlLine(ItemJnlLine2, SortProdOrderRec);
+                                        // InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine."Entry Type"::Consumption);
+                                        // GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
+                                        if PreviewPostingItemJournalLine(ItemJnlLine, ItemJnlLine2) then begin
+                                            // DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                            InsertSORDetailResultfromItemJnlLine(ItemJnlLine, SortProdOrderRec);
+                                            SortProdOrderRec."Package No." := ItemJnlLine."Package No.";
+                                            PostOUTPUTandthenCONSUMPItemJnlLineforSORProdRecording(ItemJnlLine, ItemJnlLine2);
+                                            Message('The sortation production order posting in the %1-th Step for %2 Tobacco Type is successfully posted.', SORStep_Step, SortProdOrderRec."Tobacco Type");
+                                        end else begin
+                                            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine2);
+                                        end;
+                                        DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                        DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine2);
+                                    end else
+                                        Error('Failed to creating the Consumption Journal after posting the Output Journal.');
+                                    #endregion SOR REC POST | STEP 4 WRAPPER
                                 end;
-                                if IsSuccessInsertItemJnlLine then begin
-                                    ItemJnlLine.Reset();
-                                    InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
-                                    GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
-                                    ItemJnlLine2 := ItemJnlLine;
-                                    ItemJnlLine.PostingItemJnlFromProduction(false);
-                                    InsertSORDetailResultfromItemJnlLine(ItemJnlLine2, SortProdOrderRec);
-
-                                    Clear(IsSuccessInsertItemJnlLine);
-                                    ItemJnlLine2.Reset();
-                                    tempItemJnlLine.DeleteAll();
-                                end else
-                                    Error('Failed to creating the Output Journal before posting.');
-
-                                // CONSUMPTION JOURNAL
-                                ItemJnlLine2.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Template");
-                                ItemJnlLine2.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch");
-                                ItemJnlLine2.SetRange("PMP15 Marked", true);
-                                if ItemJnlLine2.FindLast() OR (ItemJnlLine2.Count = 0) then begin // As Validation before insertion
-                                    IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption, ProdOrdLine2, ProdOrdRoutLine, ProdOrdComp);
-                                end;
-                                if IsSuccessInsertItemJnlLine then begin
-                                    ItemJnlLine2.Reset();
-                                    InsertItemJnlLinefromTemp(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
-                                    GenerateRecReserveEntryItemJnlLine(ItemJnlLine2, SortProdOrderRec);
-                                    ItemJnlLine2.PostingItemJnlFromProduction(false);
-                                    Message('The sortation production order posting in the %1-th Step for %2 Tobacco Type is successfully posted.', SORStep_Step, SortProdOrderRec."Tobacco Type");
-                                end else
-                                    Error('Failed to creating the Consumption Journal after posting the Output Journal.');
-                            end;
-                        // SortProdOrderRec."Tobacco Type"::"Raw Material":
-                        //     begin
-                        //         // 
-                        //     end;
-                        else
-                            if (SORStep_Step = SORStep_Step::"4") AND (SortProdOrderRec."Variant Changes" <> '') then begin
-                                ProdOrdLine2.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
-                                ProdOrdLine2.SetRange("Item No.", SortProdOrderRec."Sorted Item No.");
-                                ProdOrdLine2.SetFilter("Variant Code", SortProdOrderRec."Variant Changes");
-                                if ProdOrdLine2.FindFirst() then begin
-                                    // If found then go to step 5)
-                                end else begin
-                                    // If not found then go to step 3)
+                            SortProdOrderRec."Tobacco Type"::PW:
+                                begin
+                                    #region SOR REC POST | STEP 4 PW
                                     ProdOrdLine.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
                                     ProdOrdLine.SetRange("Item No.", SortProdOrderRec."Sorted Item No.");
                                     ProdOrdLine.SetFilter("Variant Code", SortProdOrderRec."Sorted Variant Code");
                                     if ProdOrdLine.FindFirst() then begin
-                                        CreateNewSORProdOrdLine(ProdOrdLine2, SortProdOrderRec, ProdOrdLine);
-                                        CreateNEwProdOrdRoutingLinefromProdOrdLine(ProdOrdRoutLine, ProdOrdLine);
+                                        ItemProdType.SetRange("Production Item Type", ItemProdType."Production Item Type"::"Sortation-Sorted PW");
+                                        if not ItemProdType.FindFirst() then
+                                            Error('No Item Production Type configuration was found for Production Item Type "%1". Please ensure that the Item Production Type master data has been properly maintained for Sortation processing.', ItemProdType."Production Item Type"::"Sortation-Sorted PW");
+
+
+                                        ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                                        ProdOrdComp.SetRange("Prod. Order Line No.", ProdOrdLine."Line No.");
+                                        if ProdOrdComp.FindSet() then
+                                            repeat
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_Status, ProdOrdComp.Status); // PK1
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_ProdOrderNo, ProdOrdComp."Prod. Order No."); // PK2
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_ProdOrderLineNo, ProdOrdComp."Prod. Order Line No."); // PK3
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_LineNo, ProdOrdComp."Line No."); // PK4
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_ItemNo, ProdOrdComp."Item No.");
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_LocationCode, ProdOrdComp."Location Code");
+                                                if ItemProdType."Item Group" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemGroup, ItemProdType."Item Group");
+                                                if ItemProdType."Item Category Code" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_ItemCategoryCode, ItemProdType."Item Category Code");
+                                                if ItemProdType."Item Class L1" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemClassL1, ItemProdType."Item Class L1");
+                                                if ItemProdType."Item Class L2" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemClassL2, ItemProdType."Item Class L2");
+                                                if ItemProdType."Item Type L1" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemTypeL1, ItemProdType."Item Type L1");
+                                                if ItemProdType."Item Type L2" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemTypeL2, ItemProdType."Item Type L2");
+                                                if ItemProdType."Item Type L3" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemTypeL3, ItemProdType."Item Type L3");
+                                                ProdCompItemTypeQuery.Open();
+
+                                                if ProdCompItemTypeQuery.Read() then begin
+                                                    PWItem := ProdOrdComp;
+                                                    IsPWItemFound := true;
+                                                end;
+
+                                                ProdCompItemTypeQuery.Close();
+
+                                            //         if Item.Get(ProdOrdComp."Item No.") then begin
+                                            //             if (Item."PMP04 Item Group" = ItemProdType."Item Group") and (Item."Item Category Code" = ItemProdType."Item Category Code") and (Item."PMP04 Item Class L1" = ItemProdType."Item Class L1") and (Item."PMP04 Item Class L2" = ItemProdType."Item Class L2") and (Item."PMP04 Item Type L1" = ItemProdType."Item Type L1") and (Item."PMP04 Item Type L2" = ItemProdType."Item Type L2") and (Item."PMP04 Item Type L3" = ItemProdType."Item Type L3") then begin
+                                            //                 PWItem := ProdOrdComp;
+                                            //                 IsPWItemFound := true;
+                                            //             end;
+                                            //         end;
+                                            until (ProdOrdComp.Next() = 0) OR IsPWItemFound;
                                     end;
-                                end;
 
-                                // OUTPUT JOURNAL
-                                ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
-                                ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
-                                ItemJnlLine.SetRange("PMP15 Marked", true);
-                                if ItemJnlLine.FindLast() OR (ItemJnlLine.Count = 0) then begin // As Validation before insertion
-                                    IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine."Entry Type"::Output, ProdOrdLine2, ProdOrdRoutLine, ProdOrdComp); // FYI, the Production Order Component is not utlized here, so just let it be here.
-                                end;
-                                if IsSuccessInsertItemJnlLine then begin
-                                    ItemJnlLine.Reset();
-                                    InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
-                                    GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
-                                    ItemJnlLine2 := ItemJnlLine;
-                                    ItemJnlLine.PostingItemJnlFromProduction(false);
-                                    InsertSORDetailResultfromItemJnlLine(ItemJnlLine2, SortProdOrderRec);
+                                    if IsPWItemFound then begin
+                                        ProdOrdLine2.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                                        ProdOrdLine2.SetRange("Item No.", PWItem."Item No.");
+                                        ProdOrdLine2.SetRange("Variant Code", PWItem."Variant Code");
+                                        if ProdOrdLine2.FindFirst() then begin
+                                            // If found then go to step 5)
+                                            // SKIP OR DO NOTHING
+                                        end else begin
+                                            // If not found then go to step 3)
+                                            CreateNewSORProdOrdLine(ProdOrdLine2, SortProdOrderRec, PWItem, ProdOrdLine);
+                                            CreateNEwProdOrdRoutingLinefromProdOrdLine(ProdOrdRoutLine, ProdOrdLine2, ProdOrdLine);
+                                        end;
+                                    end else
+                                        Error('Failed to identify a valid PW Item for the current Sortation process. Item : %1 (%2) | Production Order : %3 | Please ensure that the correct PW Item is configured in the Production Order Component lines and meets the required classification rules defined in the Item Production Type.', SortProdOrderRec."Sorted Item No.", SortProdOrderRec."Sorted Variant Code", SortProdOrderRec."Sortation Prod. Order No.");
 
-                                    Clear(IsSuccessInsertItemJnlLine);
-                                    ItemJnlLine2.Reset();
-                                    tempItemJnlLine.DeleteAll();
-                                end else
-                                    Error('Failed to creating the Output Journal before posting.');
+                                    // OUTPUT JOURNAL
+                                    ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
+                                    ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
+                                    ItemJnlLine.SetRange("PMP15 Marked", true);
+                                    if ItemJnlLine.FindLast() OR (ItemJnlLine.Count = 0) then begin // As Validation before insertion
+                                        IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine."Entry Type"::Output, ProdOrdLine2, ProdOrdRoutLine, PWItem);
+                                    end;
+                                    if IsSuccessInsertItemJnlLine then begin
+                                        ItemJnlLine.Reset();
+                                        InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
+                                        GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
+                                        // ItemJnlLine2 := ItemJnlLine;
+                                        // ItemJnlLine.PostingItemJnlFromProduction(false);
+                                        // InsertSORDetailResultfromItemJnlLine(ItemJnlLine, SortProdOrderRec);
 
-                                // CONSUMPTION JOURNAL
-                                ItemJnlLine2.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Template");
-                                ItemJnlLine2.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch");
-                                ItemJnlLine2.SetRange("PMP15 Marked", true);
-                                if ItemJnlLine2.FindLast() OR (ItemJnlLine2.Count = 0) then begin // As Validation before insertion
-                                    IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption, ProdOrdLine2, ProdOrdRoutLine, ProdOrdComp);
+                                        Clear(IsSuccessInsertItemJnlLine);
+                                        ItemJnlLine2.Reset();
+                                        tempItemJnlLine.DeleteAll();
+                                    end else
+                                        Error('Failed to creating the Output Journal before posting.');
+
+                                    // CONSUMPTION JOURNAL
+                                    ItemJnlLine2.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Template");
+                                    ItemJnlLine2.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch");
+                                    ItemJnlLine2.SetRange("PMP15 Marked", true);
+                                    if ItemJnlLine2.FindLast() OR (ItemJnlLine2.Count = 0) then begin // As Validation before insertion
+                                        IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption, ProdOrdLine2, ProdOrdRoutLine, PWItem);
+                                        // IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption, ProdOrdLine2, ProdOrdRoutLine, FILLERItem);
+                                    end;
+                                    if IsSuccessInsertItemJnlLine then begin
+                                        ItemJnlLine2.Reset();
+                                        InsertItemJnlLinefromTemp(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
+                                        GenerateRecReserveEntryItemJnlLine(ItemJnlLine2, SortProdOrderRec);
+                                        // ItemJnlLine2.PostingItemJnlFromProduction(false);
+
+                                        if IsSuppressCommit then begin
+                                            Commit();
+                                            Error('Der Prozess ist angehalten. Bitte prüfen Sie das Output- und Verbrauchs-journal, um die zu überprüfen.');
+                                        end;
+                                        if PreviewPostingItemJournalLine(ItemJnlLine, ItemJnlLine2) then begin
+                                            InsertSORDetailResultfromItemJnlLine(ItemJnlLine, SortProdOrderRec);
+                                            SortProdOrderRec."Package No." := ItemJnlLine."Package No.";
+                                            PostOUTPUTandthenCONSUMPItemJnlLineforSORProdRecording(ItemJnlLine, ItemJnlLine2);
+                                        end else begin
+                                            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine2);
+                                        end;
+                                        DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                        DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine2);
+                                        Message('The sortation production order posting in the %1-th Step for %2 Tobacco Type is successfully posted.', SORStep_Step, SortProdOrderRec."Tobacco Type");
+                                    end else
+                                        Error('Failed to creating the Consumption Journal after posting the Output Journal.');
+                                    #endregion SOR REC POST | STEP 4 PW
                                 end;
-                                if IsSuccessInsertItemJnlLine then begin
-                                    ItemJnlLine2.Reset();
-                                    InsertItemJnlLinefromTemp(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
-                                    GenerateRecReserveEntryItemJnlLine(ItemJnlLine2, SortProdOrderRec);
-                                    ItemJnlLine2.PostingItemJnlFromProduction(false);
-                                    Message('The sortation production order posting in the %1-th Step for %2 Tobacco Type is successfully posted.', SORStep_Step, SortProdOrderRec."Tobacco Type");
-                                end else
-                                    Error('Failed to creating the Consumption Journal after posting the Output Journal.');
+                            SortProdOrderRec."Tobacco Type"::Filler:
+                                begin
+                                    #region SOR REC POST | STEP 4 FILLER
+                                    ProdOrdLine.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                                    ProdOrdLine.SetRange("Item No.", SortProdOrderRec."Sorted Item No.");
+                                    ProdOrdLine.SetFilter("Variant Code", SortProdOrderRec."Sorted Variant Code");
+                                    if ProdOrdLine.FindFirst() then begin
+                                        ItemProdType.SetRange("Production Item Type", ItemProdType."Production Item Type"::"Sortation-Filler");
+                                        if not ItemProdType.FindFirst() then
+                                            Error('No Item Production Type configuration was found for Production Item Type "%1". Please ensure that the Item Production Type master data has been properly maintained for Sortation processing.', ItemProdType."Production Item Type"::"Sortation-Filler");
+
+                                        ProdOrdComp.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                                        ProdOrdComp.SetRange("Prod. Order Line No.", ProdOrdLine."Line No.");
+                                        if ProdOrdComp.FindSet() then
+                                            repeat
+                                                // if Item.Get(ProdOrdComp."Item No.") then begin
+                                                //     if (Item."PMP04 Item Group" = ItemProdType."Item Group") and (Item."Item Category Code" = ItemProdType."Item Category Code") and (Item."PMP04 Item Class L1" = ItemProdType."Item Class L1") and (Item."PMP04 Item Class L2" = ItemProdType."Item Class L2") and (Item."PMP04 Item Type L1" = ItemProdType."Item Type L1") and (Item."PMP04 Item Type L2" = ItemProdType."Item Type L2") and (Item."PMP04 Item Type L3" = ItemProdType."Item Type L3") then begin
+                                                //         FILLERItem := ProdOrdComp;
+                                                //         IsFILLERItemFound := true;
+                                                //     end;
+                                                // end;
+
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_Status, ProdOrdComp.Status); // PK1
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_ProdOrderNo, ProdOrdComp."Prod. Order No."); // PK2
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_ProdOrderLineNo, ProdOrdComp."Prod. Order Line No."); // PK3
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_LineNo, ProdOrdComp."Line No."); // PK4
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_ItemNo, ProdOrdComp."Item No.");
+                                                ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.POCOMP_LocationCode, ProdOrdComp."Location Code");
+                                                if ItemProdType."Item Group" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemGroup, ItemProdType."Item Group");
+                                                if ItemProdType."Item Category Code" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_ItemCategoryCode, ItemProdType."Item Category Code");
+                                                if ItemProdType."Item Class L1" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemClassL1, ItemProdType."Item Class L1");
+                                                if ItemProdType."Item Class L2" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemClassL2, ItemProdType."Item Class L2");
+                                                if ItemProdType."Item Type L1" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemTypeL1, ItemProdType."Item Type L1");
+                                                if ItemProdType."Item Type L2" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemTypeL2, ItemProdType."Item Type L2");
+                                                if ItemProdType."Item Type L3" <> '' then
+                                                    ProdCompItemTypeQuery.SetRange(ProdCompItemTypeQuery.ITEM_PMP04ItemTypeL3, ItemProdType."Item Type L3");
+                                                ProdCompItemTypeQuery.Open();
+
+                                                if ProdCompItemTypeQuery.Read() then begin
+                                                    FILLERItem := ProdOrdComp;
+                                                    IsFILLERItemFound := true;
+                                                end;
+
+                                                ProdCompItemTypeQuery.Close();
+                                            until (ProdOrdComp.Next() = 0) OR IsFILLERItemFound;
+                                    end;
+
+                                    if IsFILLERItemFound then begin
+                                        ProdOrdLine2.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                                        ProdOrdLine2.SetRange("Item No.", FILLERItem."Item No.");
+                                        ProdOrdLine2.SetRange("Variant Code", FILLERItem."Variant Code");
+                                        if ProdOrdLine2.FindFirst() then begin
+                                            // If found then go to step 5)
+                                        end else begin
+                                            // If not found then go to step 3)
+                                            CreateNewSORProdOrdLine(ProdOrdLine2, SortProdOrderRec, FILLERItem, ProdOrdLine);
+                                            CreateNEwProdOrdRoutingLinefromProdOrdLine(ProdOrdRoutLine, ProdOrdLine2, ProdOrdLine);
+                                        end;
+                                    end else
+                                        Error('Failed to identify a valid Filler Item for the current Sortation process. Item : %1 (%2) | Production Order : %3 | Please ensure that the correct Filler Item is configured in the Production Order Component lines and meets the required classification rules defined in the Item Production Type.', SortProdOrderRec."Sorted Item No.", SortProdOrderRec."Sorted Variant Code", SortProdOrderRec."Sortation Prod. Order No.");
+
+                                    // OUTPUT JOURNAL
+                                    ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
+                                    ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
+                                    ItemJnlLine.SetRange("PMP15 Marked", true);
+                                    if ItemJnlLine.FindLast() OR (ItemJnlLine.Count = 0) then begin // As Validation before insertion
+                                        IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine."Entry Type"::Output, ProdOrdLine2, ProdOrdRoutLine, FILLERItem);
+                                    end;
+                                    if IsSuccessInsertItemJnlLine then begin
+                                        ItemJnlLine.Reset();
+                                        InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
+                                        GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
+                                        // ItemJnlLine2 := ItemJnlLine;
+                                        // ItemJnlLine.PostingItemJnlFromProduction(false);
+                                        // InsertSORDetailResultfromItemJnlLine(ItemJnlLine, SortProdOrderRec);
+
+                                        Clear(IsSuccessInsertItemJnlLine);
+                                        ItemJnlLine2.Reset();
+                                        tempItemJnlLine.DeleteAll();
+                                    end else
+                                        Error('Failed to creating the Output Journal before posting.');
+
+                                    // CONSUMPTION JOURNAL
+                                    ItemJnlLine2.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Template");
+                                    ItemJnlLine2.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch");
+                                    ItemJnlLine2.SetRange("PMP15 Marked", true);
+                                    if ItemJnlLine2.FindLast() OR (ItemJnlLine2.Count = 0) then begin // As Validation before insertion
+                                        IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption, ProdOrdLine2, ProdOrdRoutLine, FILLERItem);
+                                    end;
+                                    if IsSuccessInsertItemJnlLine then begin
+                                        ItemJnlLine2.Reset();
+                                        InsertItemJnlLinefromTemp(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
+                                        GenerateRecReserveEntryItemJnlLine(ItemJnlLine2, SortProdOrderRec);
+                                        // ItemJnlLine2.PostingItemJnlFromProduction(false);
+
+                                        if IsSuppressCommit then begin
+                                            Commit();
+                                            Error('Der Prozess ist angehalten. Bitte prüfen Sie das Output- und Verbrauchs-journal, um die zu überprüfen.');
+                                        end;
+                                        if PreviewPostingItemJournalLine(ItemJnlLine, ItemJnlLine2) then begin
+                                            // DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                            InsertSORDetailResultfromItemJnlLine(ItemJnlLine, SortProdOrderRec);
+                                            SortProdOrderRec."Package No." := ItemJnlLine."Package No.";
+                                            PostOUTPUTandthenCONSUMPItemJnlLineforSORProdRecording(ItemJnlLine, ItemJnlLine2);
+                                        end else begin
+                                            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine2);
+                                        end;
+                                        DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                        DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine2);
+                                        Message('The sortation production order posting in the %1-th Step for %2 Tobacco Type is successfully posted.', SORStep_Step, SortProdOrderRec."Tobacco Type");
+                                    end else
+                                        Error('Failed to creating the Consumption Journal after posting the Output Journal.');
+                                    #endregion SOR REC POST | STEP 4 FILLER
+                                end;
+                        end;
+                    end else begin
+                        #region SOR REC POST | STEP 4 VARIANT CHANGES
+                        // Jadi fungsi ini mengenai membuat prod ord line dibawah dengan variant yang berbeda, dan copas dari yang sorted item.
+                        ProdOrdLine2.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                        ProdOrdLine2.SetRange("Item No.", SortProdOrderRec."Sorted Item No.");
+                        ProdOrdLine2.SetFilter("Variant Code", SortProdOrderRec."Variant Changes");
+                        if ProdOrdLine2.FindFirst() then begin
+                            // If found then go to step 5)
+                        end else begin
+                            // If not found then go to step 3)
+                            ProdOrdLine.SetRange("Prod. Order No.", SortProdOrderRec."Sortation Prod. Order No.");
+                            ProdOrdLine.SetRange("Item No.", SortProdOrderRec."Sorted Item No.");
+                            ProdOrdLine.SetFilter("Variant Code", SortProdOrderRec."Sorted Variant Code");
+                            if ProdOrdLine.FindFirst() then begin
+                                CreateNewSORProdOrdLine(ProdOrdLine2, SortProdOrderRec, ProdOrdLine);
+                                CreateNEwProdOrdRoutingLinefromProdOrdLine(ProdOrdRoutLine, ProdOrdLine2, ProdOrdLine);
                             end;
+                        end;
+
+                        // OUTPUT JOURNAL
+                        ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
+                        ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
+                        ItemJnlLine.SetRange("PMP15 Marked", true);
+                        if ItemJnlLine.FindLast() OR (ItemJnlLine.Count = 0) then begin // As Validation before insertion
+                            IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine."Entry Type"::Output, ProdOrdLine2, ProdOrdRoutLine, ProdOrdComp); // FYI, the Production Order Component is not utlized here, so just let it be here.
+                        end;
+                        if IsSuccessInsertItemJnlLine then begin
+                            ItemJnlLine.Reset();
+                            InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SortProdOrderRec, SORStep_Step);
+                            GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SortProdOrderRec);
+                            // ItemJnlLine2 := ItemJnlLine;
+                            // ItemJnlLine.PostingItemJnlFromProduction(false);
+                            // InsertSORDetailResultfromItemJnlLine(ItemJnlLine, SortProdOrderRec);
+
+                            Clear(IsSuccessInsertItemJnlLine);
+                            ItemJnlLine2.Reset();
+                            tempItemJnlLine.DeleteAll();
+                        end else
+                            Error('Failed to creating the Output Journal before posting.');
+
+                        // CONSUMPTION JOURNAL
+                        ItemJnlLine2.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Template");
+                        ItemJnlLine2.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch");
+                        ItemJnlLine2.SetRange("PMP15 Marked", true);
+                        if ItemJnlLine2.FindLast() OR (ItemJnlLine2.Count = 0) then begin // As Validation before insertion
+                            IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption, ProdOrdLine2, ProdOrdRoutLine, ProdOrdComp);
+                        end;
+                        if IsSuccessInsertItemJnlLine then begin
+                            ItemJnlLine2.Reset();
+                            InsertItemJnlLinefromTemp(ItemJnlLine2, tempItemJnlLine, SortProdOrderRec, SORStep_Step, ItemJnlLine2."Entry Type"::Consumption);
+                            GenerateRecReserveEntryItemJnlLine(ItemJnlLine2, SortProdOrderRec);
+                            // ItemJnlLine2.PostingItemJnlFromProduction(false);
+
+                            if IsSuppressCommit then begin
+                                Commit();
+                                Error('Der Prozess ist angehalten. Bitte prüfen Sie das Output- und Verbrauchs-journal, um die zu überprüfen.');
+                            end;
+                            if PreviewPostingItemJournalLine(ItemJnlLine, ItemJnlLine2) then begin
+                                // DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                InsertSORDetailResultfromItemJnlLine(ItemJnlLine, SortProdOrderRec);
+                                SortProdOrderRec."Package No." := ItemJnlLine."Package No.";
+                                PostOUTPUTandthenCONSUMPItemJnlLineforSORProdRecording(ItemJnlLine, ItemJnlLine2);
+                            end else begin
+                                DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine2);
+                            end;
+                            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine2);
+                            Message('The sortation production order posting in the %1-th Step for %2 Tobacco Type is successfully posted.', SORStep_Step, SortProdOrderRec."Tobacco Type");
+                        end else
+                            Error('Failed to creating the Consumption Journal after posting the Output Journal.');
+                        #endregion SOR REC POST | STEP 4 VARIANT CHANGES
                     end;
                 end;
             else
@@ -2624,24 +3650,54 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     /// <remarks>This procedure executes the posting of the Item Journal Line that was prepared for Sortation Reclassification using the standard <c>Item Jnl.-Post</c> codeunit. Upon successful execution, it displays a confirmation message; otherwise, it notifies the user that posting has failed. The posting action finalizes stock movements defined in the journal lines related to the Sortation process.</remarks>
     /// <param name="ItemJnlLine">The Item Journal Line record containing the Sortation Reclassification transaction data to be posted.</param>
     /// <param name="SortProdOrderRec">The temporary Sortation Production Order Recording that provides contextual information for the posting process.</param>
-    procedure PostItemReclassJnlSOR(var ItemJnlLine: Record "Item Journal Line"; SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary)
+    procedure PostItemReclassJnlSOR(var SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary; var ItemJnlLine: Record "Item Journal Line")
     var
         ItemJnlBatchPostMgmt: Codeunit "Item Jnl.-Post Batch";
+        ItemJnlPostLineMgmt: Codeunit "Item Jnl.-Post Line";
     begin
-        Commit();
-        if ItemJnlBatchPostMgmt.Run(ItemJnlLine) then
-            Message('The Reclassification Journal is successfully posted.')
-        else
-            Error(GetLastErrorText());
+        ItemJnlBatchPostMgmt.SetSuppressCommit(true);
+        ItemJnlBatchPostMgmt.Run(ItemJnlLine);
+
+        Message('The Reclassification Journal is successfully posted.')
+    end;
+
+    /// <summary>Posts <b>OUTPUT</b> Item Journal Lines first, then posts the corresponding <b>CONSUMPTION</b> Item Journal Lines for <b>SOR Production Recording</b>.</summary>
+    local procedure PostOUTPUTandthenCONSUMPItemJnlLineforSORProdRecording(var ItemJnlLine: Record "Item Journal Line"; var ItemJnlLine2: Record "Item Journal Line")
+    var
+        ItemJnlPostMgmt: Codeunit "Item Jnl.-Post";
+        ItemJnlBatchPostMgmt: Codeunit "Item Jnl.-Post Batch";
+        ItemJnlPostLineMgmt: Codeunit "Item Jnl.-Post Line";
+    begin
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/14 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+        // Error('ItemJnlLine.GetFilters() = %1', ItemJnlLine.GetFilters());
+        // ItemJnlLine.MarkedOnly(true);
+        // if ItemJnlLine.FindSet() then
+        //     repeat
+        // ItemJnlPostMgmt.SetPreviewMode(true);
+        // ItemJnlPostMgmt.Run(ItemJnlLine);
+        // ItemJnlLine.PostingItemJnlFromProduction(false);
+
+        // ItemJnlPostLineMgmt.Run(ItemJnlLine);
+        //     ItemJnlBatchPostMgmt.SetSuppressCommit(true);
+        //     ItemJnlBatchPostMgmt.Run(ItemJnlLine);
+        // until ItemJnlLine.Next() = 0;
+
+        ItemJnlLine.MarkedOnly(true);
+        // ItemJnlBatchPostMgmt.SetSuppressCommit(true);
+        ItemJnlBatchPostMgmt.Run(ItemJnlLine);
+
+        ItemJnlLine2.MarkedOnly(true);
+        // ItemJnlBatchPostMgmt.SetSuppressCommit(true);
+        ItemJnlBatchPostMgmt.Run(ItemJnlLine2);
+        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/14 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
     end;
 
     #endregion SOR RECORDING
 
+
+
     #region SOR INSPECTION PACKING LIST
-    /**
-    TODO: XXXXXXXXX
-    */
-    // Initializes default values and assigns a new document number before inserting a Sortation Inspection Package Header record.
+    /// <summary>Initializes numbering, dates, and default setup values before inserting a <b>SOR Inspection Package Header</b>.</summary>
     [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Inspection Pkg Headr", OnBeforeInsertEvent, '', false, false)]
     local procedure PMP15SetInitValBeforeInsert_OnBeforeInsertEvent(var Rec: Record "PMP15 SOR Inspection Pkg Headr"; RunTrigger: Boolean)
     var
@@ -2656,36 +3712,24 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         if Rec."No." = '' then begin
             ExtComSetup.Get();
             PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Location Code"));
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Inspection Pkg. Nos."));
+            CheckProductionItemTypeforSortationInspectionisExist();
+
             Rec."No. Series" := ExtComSetup."PMP15 SOR Inspection Pkg. Nos.";
             Rec."No." := NoSeriesMgmt.GetNextNo(Rec."No. Series");
-            Rec."Created Date" := WorkDate();
-            Rec."Created By" := UserId();
-            Rec."Posting Date" := WorkDate();
-            Rec."No. Series" := ExtComSetup."PMP15 SOR Inspection Pkg. Nos.";
         end;
+        Rec."Created Date" := WorkDate();
+        Rec."Created By" := UserId();
+        Rec."Posting Date" := WorkDate();
     end;
 
-    // Automatically assigns the New Item Code & Location Code on a new Sortation Inspection Package Line based on the related Inspection Header.
+    ///<summary>Automatically assigns the New Item Code & Location Code on a new Sortation Inspection Package Line based on the related Inspection Header.</summary>
     [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Inspection Pkg. Line", OnAfterInsertEvent, '', false, false)]
     local procedure PMP15SetValAfterInsert_OnAfterInsertEvent(var Rec: Record "PMP15 SOR Inspection Pkg. Line"; RunTrigger: Boolean)
-    var
-        SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr";
-        Item, Item2 : Record Item;
     begin
-        SORInspectHeadr.Reset();
+        ExtCompanySetup.Get();
 
         Rec.Validate(Result);
-        SORInspectHeadr.SetRange("No.", Rec."Document No.");
-        if SORInspectHeadr.FindFirst() then begin
-            if Rec."New Item Code" = '' then begin
-                if not Item.Get(SORInspectHeadr."Sorted Item No.") then
-                    Error('The Sorted Item No. (%1) in the Sortation Inspection Packing List Header is not found in the existing Item data.', SORInspectHeadr."Sorted Item No.");
-                Item2.SetRange("Item Category Code", Item."Item Category Code");
-                if Item2.FindFirst() then begin
-                    Rec."New Item Code" := Item2."No.";
-                end;
-            end;
-        end;
 
         if Rec."Location Code" = '' then begin
             ExtCompanySetup.Get();
@@ -2694,13 +3738,34 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         Rec.Modify();
     end;
 
-    // Sets the appropriate destination Bin Code based on the inspection Result value.
+    /// <summary>Resets <b>Sorted Variant Code</b> and clears <b>Lot No.</b> when the Sorted Item No. changes or is cleared.</summary>
+    [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Inspection Pkg Headr", OnAfterValidateEvent, "Sorted Item No.", false, false)]
+    local procedure PMP15SetValue_OnAfterValidateEvent_SortedItemNo(var Rec: Record "PMP15 SOR Inspection Pkg Headr"; var xRec: Record "PMP15 SOR Inspection Pkg Headr"; CurrFieldNo: Integer)
+    begin
+        if (Rec."Sorted Item No." <> xRec."Sorted Item No.") OR (Rec."Sorted Item No." = '') then begin
+            Rec.Validate("Sorted Variant Code", '');
+            Clear(Rec."Lot No.");
+        end;
+    end;
+
+    /// <summary>Clears <b>Lot No.</b> when the Sorted Variant Code is changed to ensure data consistency.</summary>
+    [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Inspection Pkg Headr", OnAfterValidateEvent, "Sorted Variant Code", false, false)]
+    local procedure PMP15SetValue_OnAfterValidateEvent_SortedVariantCode(var Rec: Record "PMP15 SOR Inspection Pkg Headr"; var xRec: Record "PMP15 SOR Inspection Pkg Headr"; CurrFieldNo: Integer)
+    begin
+        if (Rec."Sorted Variant Code" <> xRec."Sorted Variant Code") AND (Rec."Sorted Variant Code" <> '') then begin
+            Clear(Rec."Lot No.");
+        end;
+    end;
+
+    ///<summary>Sets the appropriate destination Bin Code based on the inspection Result value.</summary>
     [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Inspection Pkg. Line", OnAfterValidateEvent, Result, false, false)]
     local procedure PMP15ValidateResult_OnAfterValidateEvent_Result(var Rec: Record "PMP15 SOR Inspection Pkg. Line"; var xRec: Record "PMP15 SOR Inspection Pkg. Line"; CurrFieldNo: Integer)
     var
         BinRec: Record Bin;
+        PackageNoInfor: Record "Package No. Information";
     begin
         BinRec.Reset();
+        PackageNoInfor.Reset();
 
         case Rec.Result of
             Rec.Result::" ", Rec.Result::Accepted, Rec.Result::"Item Change":
@@ -2709,19 +3774,37 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     if BinRec.FindFirst() then begin
                         Rec."To Bin Code" := BinRec.Code;
                     end;
+                    Rec."New Sub Merk 1" := Rec."Sub Merk 1";
+                    Rec."New Sub Merk 2" := Rec."Sub Merk 2";
+                    Rec."New Sub Merk 3" := Rec."Sub Merk 3";
+                    Rec."New Sub Merk 4" := Rec."Sub Merk 4";
+                    Rec."New Sub Merk 5" := Rec."Sub Merk 5";
+                    Rec."L/R" := Rec."New L/R";
                 end;
             Rec.Result::Rework:
                 begin
-                    BinRec.SetRange("PMP15 Bin Type", BinRec."PMP15 Bin Type"::"1");
+                    // LA TEMPORAIRE
+                    // JIKA MEMILIH REWORK MAKA OTOMATIS SET NEW ITEM NO := UNSORTED ITEM | STANDARD := UNSORTED VARIANT CODE.
+                    PackageNoInfor.SetRange("Item No.", Rec."Sorted Item No.");
+                    PackageNoInfor.SetRange("Variant Code", Rec."Sorted Variant Code");
+                    PackageNoInfor.SetRange("Package No.", Rec."Package No.");
+                    PackageNoInfor.SetFilter("PMP04 Lot No.", Rec."Lot No.");
+                    PackageNoInfor.SetRange("PMP15 Able to Sell", true);
+                    PackageNoInfor.SetRange("PMP15 SOR Inspection Pckg. No.", Rec."Document No.");
+                    if PackageNoInfor.FindFirst() then begin
+                        Rec."New Item Code" := PackageNoInfor."PMP15 Unsorted Item No.";
+                        Rec.Standard := PackageNoInfor."PMP15 Unsorted Variant Code";
+                    end;
+
+                    BinRec.SetRange("PMP15 Bin Type", BinRec."PMP15 Bin Type"::"3");
                     if BinRec.FindFirst() then begin
                         Rec."To Bin Code" := BinRec.Code;
                     end;
                 end;
-        // else
-        // Error('There is no Result enum option with the value of "%1"', Rec.Result);
         end;
     end;
 
+    /// <summary>Clears the linked <b>SOR Inspection Package No.</b> from Package No. Information before deleting an inspection line to maintain data integrity.</summary>
     [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Inspection Pkg. Line", OnBeforeDeleteEvent, '', false, false)]
     local procedure PMP15ValidateBeforeDeletion_OnBeforeDeleteEvent(var Rec: Record "PMP15 SOR Inspection Pkg. Line"; RunTrigger: Boolean)
     var
@@ -2734,9 +3817,8 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         if SORInspectHeadr.FindFirst() then begin
             PackageNoInfor.SetRange("PMP15 SOR Inspection Pckg. No.", Rec."Document No.");
             PackageNoInfor.SetRange("Package No.", Rec."Package No.");
-            PackageNoInfor.SetRange("Item No.", Rec."New Item Code");
-            PackageNoInfor.SetRange("Variant Code", SORInspectHeadr."Sorted Variant Code");
-            PackageNoInfor.SetFilter("PMP04 Lot No.", Rec."Lot No.");
+            PackageNoInfor.SetRange("Item No.", Rec."Sorted Item No.");
+            PackageNoInfor.SetFilter("Variant Code", Rec."Package Variant Code");
             // PackageNoInfor.SetRange("PMP15 Able to Sell", true);
             if PackageNoInfor.FindFirst() then begin
                 Clear(PackageNoInfor."PMP15 SOR Inspection Pckg. No.");
@@ -2754,15 +3836,21 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         SORInspectPkgLine: Record "PMP15 SOR Inspection Pkg. Line";
         PackageNoInfor: Record "Package No. Information";
         BinContent: Record "Bin Content";
-        Item: Record Item;
+        BinRec: Record Bin;
+        ProdItemTypeRec: Record "PMP07 Production Item Type";
+        SortedItemRec, Item : Record Item;
         ItemVariantRec: Record "Item Variant";
         LastLineNo: Integer;
+        PackNoInfoListPage: Page "Package No. Information List";
     begin
         SORInspectPkgLine.Reset();
         PackageNoInfor.Reset();
+        BinRec.Reset();
+        ProdItemTypeRec.Reset();
         ExtCompanySetup.Get();
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Location Code"));
         ValidateSORInspectInputs(SORInspectHeadr);
+        SortedItemRec.Get(SORInspectHeadr."Sorted Item No.");
 
         SORInspectPkgLine.SetRange("Document No.", SORInspectHeadr."No.");
         if SORInspectPkgLine.FindLast() then begin
@@ -2774,7 +3862,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             LastLineNo += 10000;
 
         PackageNoInfor.SetRange("Item No.", SORInspectHeadr."Sorted Item No.");
-        PackageNoInfor.SetRange("Variant Code", SORInspectHeadr."Sorted Variant Code");
+        PackageNoInfor.SetFilter("Variant Code", SORInspectHeadr."Sorted Variant Code");
         PackageNoInfor.SetFilter("PMP04 Lot No.", SORInspectHeadr."Lot No.");
         PackageNoInfor.SetRange("PMP15 Able to Sell", true);
         PackageNoInfor.SetFilter("PMP15 SOR Inspection Pckg. No.", '%1', '');
@@ -2783,55 +3871,126 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
 
         OnAfterSORInpctPkgLineSetFiltersofPackageNoInfo(SORInspectHeadr, PackageNoInfor);
 
-        SORInspectPkgLine.Reset();
-        if Page.RunModal(Page::"Package No. Information List", PackageNoInfor) = Action::LookupOK then begin
-            SORInspectPkgLine.Init();
-            SORInspectPkgLine."Document No." := SORInspectHeadr."No.";
-            SORInspectPkgLine."Line No." := LastLineNo;
-            SORInspectPkgLine.Select := true;
-            SORInspectPkgLine."Sub Merk 1" := PackageNoInfor."PMP04 Sub Merk 1";
-            SORInspectPkgLine."Sub Merk 2" := PackageNoInfor."PMP04 Sub Merk 2";
-            SORInspectPkgLine."Sub Merk 3" := PackageNoInfor."PMP04 Sub Merk 3";
-            SORInspectPkgLine."Sub Merk 4" := PackageNoInfor."PMP04 Sub Merk 4";
-            SORInspectPkgLine."L/R" := ConvertLREnumfromCodes(PackageNoInfor."PMP04 L/R");
-            SORInspectPkgLine."Lot No." := PackageNoInfor."PMP04 Lot No.";
-            SORInspectPkgLine."Package No." := PackageNoInfor."Package No.";
+        // SORInspectPkgLine.Reset();
+        Clear(PackNoInfoListPage);
+        PackNoInfoListPage.LookupMode(true);
+        PackNoInfoListPage.SetTableView(PackageNoInfor);
+        // if Page.RunModal(Page::"Package No. Information List", PackageNoInfor) = Action::LookupOK then begin
+        if PackNoInfoListPage.RunModal() = Action::LookupOK then begin
+            Clear(PackageNoInfor);
+            PackageNoInfor.Reset();
+            PackNoInfoListPage.SetSelectionFilter(PackageNoInfor);
+            if PackageNoInfor.FindSet() then begin
+                repeat
+                    PackageNoInfor.CalcFields(Inventory, "PMP04 Bin Code", "PMP04 Lot No.");
+                    SORInspectPkgLine.Init();
+                    SORInspectPkgLine."Document No." := SORInspectHeadr."No.";
+                    SORInspectPkgLine."Line No." := LastLineNo;
+                    SORInspectPkgLine.Select := true;
+                    // 
+                    SORInspectPkgLine."Sorted Item No." := PackageNoInfor."Item No.";
+                    SORInspectPkgLine."Sorted Variant Code" := PackageNoInfor."Variant Code";
+                    // 
+                    SORInspectPkgLine."Sub Merk 1" := PackageNoInfor."PMP04 Sub Merk 1";
+                    SORInspectPkgLine."Sub Merk 2" := PackageNoInfor."PMP04 Sub Merk 2";
+                    SORInspectPkgLine."Sub Merk 3" := PackageNoInfor."PMP04 Sub Merk 3";
+                    SORInspectPkgLine."Sub Merk 4" := PackageNoInfor."PMP04 Sub Merk 4";
+                    SORInspectPkgLine."Sub Merk 5" := PackageNoInfor."PMP04 Sub Merk 5";
+                    SORInspectPkgLine."L/R" := ConvertLREnumfromCodes(PackageNoInfor."PMP04 L/R");
+                    SORInspectPkgLine."Lot No." := PackageNoInfor."PMP04 Lot No.";
+                    SORInspectPkgLine."Package No." := PackageNoInfor."Package No.";
+                    SORInspectPkgLine."Package Variant Code" := PackageNoInfor."Variant Code";
 
-            BinContent.Reset();
-            BinContent.SetRange("Item No.", SORInspectHeadr."Sorted Item No.");
-            BinContent.SetRange("Variant Code", SORInspectHeadr."Sorted Variant Code");
-            BinContent.SetRange("Location Code", ExtCompanySetup."PMP15 SOR Location Code");
-            BinContent.SetAutoCalcFields("Quantity (Base)");
-            BinContent.SetFilter("Quantity (Base)", '>0');
-            BinContent.SetFilter("Lot No. Filter", SORInspectPkgLine."Lot No.");
-            BinContent.SetFilter("Package No. Filter", SORInspectPkgLine."Package No.");
-            if BinContent.FindFirst() then begin
-                SORInspectPkgLine.Quantity := BinContent."Quantity (Base)";
-                SORInspectPkgLine."From Bin Code" := BinContent."Bin Code";
+                    BinContent.Reset();
+                    BinContent.SetFilter("Lot No. Filter", SORInspectPkgLine."Lot No.");
+                    BinContent.SetFilter("Package No. Filter", SORInspectPkgLine."Package No.");
+                    BinContent.SetRange("Item No.", SORInspectPkgLine."Sorted Item No.");
+                    BinContent.SetFilter("Variant Code", SORInspectPkgLine."Sorted Variant Code");
+                    BinContent.SetRange("Location Code", ExtCompanySetup."PMP15 SOR Location Code");
+                    BinContent.SetAutoCalcFields("Quantity (Base)");
+                    BinContent.SetFilter("Quantity (Base)", '>0');
+                    if BinContent.FindFirst() then begin
+                        SORInspectPkgLine.Quantity := BinContent."Quantity (Base)";
+                        SORInspectPkgLine."From Bin Code" := BinContent."Bin Code";
+                    end;
+
+                    // If Result = Blank/ Accepted/ Item Changes then SOR Step = Inspection | If Result = Rework then SOR Step (Bin Type) = 1 Change to SOR Step/ SOR Bin Type = 3
+                    if SORInspectPkgLine.Result in [SORInspectPkgLine.Result::" ", SORInspectPkgLine.Result::Accepted, SORInspectPkgLine.Result::"Item Change"] then begin
+                        BinRec.Reset();
+                        BinRec.SetRange("PMP15 Bin Type", BinRec."PMP15 Bin Type"::Inspection);
+                        if BinRec.FindFirst() then begin
+                            SORInspectPkgLine."To Bin Code" := BinRec.Code;
+                        end;
+                    end else if SORInspectPkgLine.Result in [SORInspectPkgLine.Result::Rework] then begin
+                        BinRec.Reset();
+                        BinRec.SetRange("PMP15 Bin Type", BinRec."PMP15 Bin Type"::"3");
+                        if BinRec.FindFirst() then begin
+                            SORInspectPkgLine."To Bin Code" := BinRec.Code;
+                        end;
+                    end;
+
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/16 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    Item.Reset();
+                    ProdItemTypeRec.SetRange("Production Item Type", Enum::"PMP09 Production Item Type"::"Sortation-Inspection");
+                    if not ProdItemTypeRec.FindFirst() then
+                        CheckProductionItemTypeforSortationInspectionisExist();
+
+                    if ProdItemTypeRec."Item Category Code" <> '' then
+                        Item.SetRange("Item Category Code", ProdItemTypeRec."Item Category Code");
+                    if ProdItemTypeRec."Item Group" <> '' then
+                        Item.SetRange("PMP04 Item Group", ProdItemTypeRec."Item Group");
+                    if ProdItemTypeRec."Item Type L1" <> '' then
+                        Item.SetRange("PMP04 Item Type L1", ProdItemTypeRec."Item Type L1");
+                    if ProdItemTypeRec."Item Type L2" <> '' then
+                        Item.SetRange("PMP04 Item Type L2", ProdItemTypeRec."Item Type L2");
+                    if ProdItemTypeRec."Item Type L3" <> '' then
+                        Item.SetRange("PMP04 Item Type L3", ProdItemTypeRec."Item Type L3");
+                    if ProdItemTypeRec."Item Class L1" <> '' then
+                        Item.SetRange("PMP04 Item Class L1", ProdItemTypeRec."Item Class L1");
+                    if ProdItemTypeRec."Item Class L2" <> '' then
+                        Item.SetRange("PMP04 Item Class L2", ProdItemTypeRec."Item Class L2");
+                    Item.SetRange("PMP04 Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
+
+                    if not Item.FindFirst() then begin
+                        Item.SetRange("Item Category Code", SortedItemRec."Item Category Code");
+                        Item.SetRange("PMP04 Item Type L1", SortedItemRec."PMP04 Item Type L1");
+                        if Item.FindFirst() then begin
+                            SORInspectPkgLine."New Item Code" := Item."No.";
+                        end else
+                            Error('The default value for the Production Item Type from Sortation-Inspection could not be found for the Item Category Code and Item Type L1 of the Sorted Item No. %1.', SORInspectHeadr."Sorted Item No.");
+                    end else
+                        SORInspectPkgLine."New Item Code" := Item."No.";
+
+                    if SORInspectPkgLine."New Item Code" <> '' then begin
+                        SORInspectPkgLine."Unit of Measure Code" := Item."Base Unit of Measure";
+                    end;
+                    //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/16 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
+                    // Item.Reset();
+                    // if Item.Get(PackageNoInfor."Item No.") then begin
+                    //     SORInspectPkgLine."Unit of Measure Code" := Item."Base Unit of Measure";
+                    //     SORInspectPkgLine."New Item Code" := Item."No.";
+                    //     // ItemVariantRec.Reset();
+                    //     // ItemVariantRec.SetRange("Item No.", Item."No.");
+                    //     // if ItemVariantRec.FindFirst() then
+                    //     //     SORInspectPkgLine.Standard := ItemVariantRec.Code;
+                    // end else
+                    //     Error('The Item is not found for the Package No Information you choose.');
+
+                    SORInspectPkgLine."New Sub Merk 1" := SORInspectPkgLine."Sub Merk 1";
+                    SORInspectPkgLine."New Sub Merk 2" := SORInspectPkgLine."Sub Merk 2";
+                    SORInspectPkgLine."New Sub Merk 3" := SORInspectPkgLine."Sub Merk 3";
+                    SORInspectPkgLine."New Sub Merk 4" := SORInspectPkgLine."Sub Merk 4";
+                    SORInspectPkgLine."New Sub Merk 5" := SORInspectPkgLine."Sub Merk 5";
+                    SORInspectPkgLine."New L/R" := SORInspectPkgLine."New L/R";
+                    SORInspectPkgLine.Validate(Result); // Validate Bin Code
+                    SORInspectPkgLine.Insert();
+                    LastLineNo += 10000;
+
+                    PackageNoInfor."PMP15 SOR Inspection Pckg. No." := SORInspectHeadr."No.";
+                    PackageNoInfor.Modify();
+                until PackageNoInfor.Next() = 0;
             end;
-
-            Item.Reset();
-            if Item.Get(PackageNoInfor."Item No.") then begin
-                SORInspectPkgLine."Unit of Measure Code" := Item."Base Unit of Measure";
-                SORInspectPkgLine."New Item Code" := Item."No.";
-                ItemVariantRec.Reset();
-                ItemVariantRec.SetRange("Item No.", Item."No.");
-                if ItemVariantRec.FindFirst() then
-                    SORInspectPkgLine.Standard := ItemVariantRec.Code;
-            end else
-                Error('The Item is not found for the Package No Information you choose.');
-
-            SORInspectPkgLine."New Sub Merk 1" := SORInspectPkgLine."Sub Merk 1";
-            SORInspectPkgLine."New Sub Merk 2" := SORInspectPkgLine."Sub Merk 2";
-            SORInspectPkgLine."New Sub Merk 3" := SORInspectPkgLine."Sub Merk 3";
-            SORInspectPkgLine."New Sub Merk 4" := SORInspectPkgLine."Sub Merk 4";
-            SORInspectPkgLine."New Sub Merk 5" := SORInspectPkgLine."Sub Merk 5";
-            SORInspectPkgLine."New L/R" := SORInspectPkgLine."New L/R";
-            SORInspectPkgLine.Validate(Result); // Validate Bin Code
-            SORInspectPkgLine.Insert();
-
-            PackageNoInfor."PMP15 SOR Inspection Pckg. No." := SORInspectHeadr."No.";
-            PackageNoInfor.Modify();
         end;
     end;
 
@@ -2858,6 +4017,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     /// <param name="SORInspectHeadr">Record variable representing the Sortation Inspection Package Header to be reopened.</param>
     procedure ReopenSORInspectionPkgDocument(var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr")
     var
+        SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line";
         CanBeOpen: Boolean;
     begin
         Clear(CanBeOpen);
@@ -2872,27 +4032,42 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         end;
     end;
 
+    /// <summary>Validates <b>SOR Inspection Package Lines</b> by enforcing item variant rules and ensuring at least one valid <b>inspection result</b> exists before posting.</summary>
     local procedure ValidateSORInspectPkgLineforItemVariantCheck(SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr")
     var
-        SORInspectPkgLine: Record "PMP15 SOR Inspection Pkg. Line";
+        SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line";
         Item: Record Item;
         ItemVariant: Record "Item Variant";
+        IsAllResultBlank: Boolean;
     begin
-        SORInspectPkgLine.Reset();
-        SORInspectPkgLine.SetRange("Document No.", SORInspectHeadr."No.");
-        if SORInspectPkgLine.FindSet() then
+        IsAllResultBlank := true;
+        SORInspectPkgLineRec.Reset();
+        SORInspectPkgLineRec.SetRange("Document No.", SORInspectHeadr."No.");
+        if SORInspectPkgLineRec.FindSet() then
             repeat
                 Item.Reset();
                 ItemVariant.Reset();
-                if Item.Get(SORInspectPkgLine."New Item Code") then begin
+
+                if (SORInspectPkgLineRec.Result in [SORInspectPkgLineRec.Result::Accepted, SORInspectPkgLineRec.Result::"Item Change", SORInspectPkgLineRec.Result::Rework]) then begin
+                    Clear(IsAllResultBlank);
+                end;
+
+                if Item.Get(SORInspectPkgLineRec."New Item Code") then begin
                     ItemVariant.SetRange("Item No.", Item."No.");
                     if ItemVariant.Count > 0 then begin
-                        Error('The field "Standard" must have a value because the New Item Code %1 has Item Variants.', SORInspectPkgLine."New Item Code");
+                        if SORInspectPkgLineRec.Standard = '' then begin
+                            Error('The "Standard" field must be populated because the new item code %1 has item variants defined.', SORInspectPkgLineRec."New Item Code");
+                        end;
                     end;
                 end;
-            until SORInspectPkgLine.Next() = 0;
+            until SORInspectPkgLineRec.Next() = 0;
+
+        if IsAllResultBlank then begin
+            Error('The Inspection Line is data invalid. Please make sure to fix the Result status, Standard field, and others before posting.');
+        end;
     end;
 
+    /// <summary>Retrieves the related <b>Production Order</b> associated with the specified <b>SOR Inspection Package Header</b> based on SOR completion criteria.</summary>
     local procedure GetProdOrdwithSORInspectPkgListNo(SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; var ProdOrder: Record "Production Order")
     var
         recProductionOrder: Record "Production Order";
@@ -2901,45 +4076,69 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         recProductionOrder.SetRange("PMP15 SOR Completed");
     end;
 
+    /// <summary> <b>Simulates</b> the creation of a <b>Sortation Production Order</b> in a temporary record based on the provided <b>SOR Inspection Package Header</b>. </summary>
+    /// <remarks> This procedure checks whether at least one SOR Inspection Package Line contains a valid <b>Lot No.</b>. When found, it initializes and prepares a temporary Production Order using the configured <b>Sort-Prod. Order No. Series</b>, assigns core dates, location, item, variant, and SOR-related fields, and links it to the originating <b>SOR Inspection Package</b>. No actual database posting occurs; the operation is intended to <b>validate feasibility</b> and preview whether an insert would succeed before performing the real transaction. </remarks>
+    /// <param name="tempProdOrderRec">Temporary Production Order record used to simulate the insert.</param>
+    /// <param name="SORInspectHeader">SOR Inspection Package Header that provides source item, variant, lot, and linkage context.</param>
+    /// <returns> Returns <b>true</b> if the temporary Production Order is successfully inserted; otherwise, returns <b>false</b>. </returns>
     procedure SimulateInsertSuccess(var tempProdOrderRec: Record "Production Order" temporary; var SORInspectHeader: Record "PMP15 SOR Inspection Pkg Headr") IsInsertSuccess: Boolean
+    var
+        SORInspectPkgLine: Record "PMP15 SOR Inspection Pkg. Line";
     begin
         ExtCompanySetup.Get();
+        SORInspectPkgLine.Reset();
         tempProdOrderRec.DeleteAll();
         tempProdOrderRec.Reset();
-        tempProdOrderRec.Init();
-        tempProdOrderRec."No." := NoSeriesMgmt.PeekNextNo(ExtCompanySetup."PMP15 Sort-Prod. Order Nos.", WorkDate());
-        tempProdOrderRec."No. Series" := ExtCompanySetup."PMP15 Sort-Prod. Order Nos.";
-        tempProdOrderRec.Status := tempProdOrderRec.Status::"Firm Planned";
-        tempProdOrderRec."Creation Date" := WorkDate();
-        tempProdOrderRec."Last Date Modified" := WorkDate();
-        tempProdOrderRec.Validate("Source Type", tempProdOrderRec."Source Type"::Item);
-        tempProdOrderRec.Validate("Source No.", SORInspectHeader."Sorted Item No.");
-        tempProdOrderRec.Validate("Variant Code", SORInspectHeader."Sorted Variant Code");
-        tempProdOrderRec.Validate("Location Code", ExtCompanySetup."PMP15 SOR Location Code");
-        // tempProdOrderRec.Validate(Quantity, SortProdOrdCreation.Quantity);
-        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
-        // tempProdOrderRec."PMP15 Crop" := Date2DMY(WorkDate(), 3);
-        tempProdOrderRec."PMP15 Crop" := Format(Date2DMY(WorkDate(), 3));
-        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
-        tempProdOrderRec."PMP15 SOR Inspection Pkg. No." := SORInspectHeader."No.";
-        tempProdOrderRec."PMP04 Item Owner Internal" := ExtCompanySetup."PMP15 SOR Item Owner Internal";
-        exit(tempProdOrderRec.Insert());
+
+        SORInspectPkgLine.SetRange("Document No.", SORInspectHeader."No.");
+        SORInspectPkgLine.SetFilter("Lot No.", '<> %1', '');
+        if SORInspectPkgLine.FindFirst() then begin
+            tempProdOrderRec.Init();
+            tempProdOrderRec.InitRecord();
+            tempProdOrderRec."No. Series" := ExtCompanySetup."PMP15 Sort-Prod. Order Nos.";
+            tempProdOrderRec."No." := NoSeriesMgmt.PeekNextNo(ExtCompanySetup."PMP15 Sort-Prod. Order Nos.", WorkDate());
+            tempProdOrderRec.Status := tempProdOrderRec.Status::"Firm Planned";
+            tempProdOrderRec.Validate("Due Date", WorkDate());
+            tempProdOrderRec."Creation Date" := WorkDate();
+            tempProdOrderRec."Starting Date" := WorkDate();
+            tempProdOrderRec."Last Date Modified" := WorkDate();
+            tempProdOrderRec.Validate("Source Type", tempProdOrderRec."Source Type"::Item);
+            tempProdOrderRec.Validate("Source No.", SORInspectHeader."Sorted Item No.");
+            tempProdOrderRec.Validate("Variant Code", SORInspectHeader."Sorted Variant Code");
+            tempProdOrderRec.Validate("Location Code", ExtCompanySetup."PMP15 SOR Location Code");
+            tempProdOrderRec.Validate("PMP15 Lot No.", SORInspectPkgLine."Lot No.");
+            // tempProdOrderRec.Validate(Quantity, SortProdOrdCreation.Quantity);
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+            // tempProdOrderRec."PMP15 Crop" := Date2DMY(WorkDate(), 3);
+            tempProdOrderRec."PMP15 Crop" := Format(Date2DMY(WorkDate(), 3));
+            //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/05 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+            tempProdOrderRec."PMP15 SOR Inspection Pkg. No." := SORInspectHeader."No.";
+            tempProdOrderRec."PMP04 Item Owner Internal" := ExtCompanySetup."PMP15 SOR Item Owner Internal";
+            exit(tempProdOrderRec.Insert());
+        end;
     end;
 
+    /// <summary>Inserts a new <b>Production Order</b> from a temporary record by assigning the next <b>Sort-Prod. Order No.</b> and linking it to the related <b>SOR Inspection Package</b>.</summary>
     local procedure InsertProdOrderfromTemp(tempProdOrderRec: Record "Production Order" temporary; var ProdOrderRec: Record "Production Order")
     var
-        myInt: Integer;
     begin
         ProdOrderRec.Init();
         ProdOrderRec.Copy(tempProdOrderRec);
         ProdOrderRec."No." := NoSeriesMgmt.GetNextNo(ExtCompanySetup."PMP15 Sort-Prod. Order Nos.", WorkDate());
-        ProdOrderRec.Validate("Starting Date", WorkDate());
-        ProdOrderRec.Validate("Starting Date-Time", CurrentDateTime);
-        ProdOrderRec.Validate("Ending Date-Time", CurrentDateTime);
-        ProdOrderRec.Validate("Due Date", CalcDate('<+2D>', WorkDate()));
-        ProdOrderRec.Insert();
+        ProdOrderRec."PMP15 SOR Inspection Pkg. No." := tempProdOrderRec."PMP15 SOR Inspection Pkg. No.";
+        // ProdOrderRec.Validate("Starting Date", WorkDate());
+        // ProdOrderRec.Validate("Starting Date-Time", CurrentDateTime);
+        // ProdOrderRec.Validate("Ending Date-Time", CurrentDateTime);
+        // ProdOrderRec.Validate("Due Date", CalcDate('<+2D>', WorkDate()));
+        ProdOrderRec.Insert(true);
+        ProdOrderRec.Mark(true);
     end;
 
+    /// <summary> Returns the <b>next available Line No.</b> for a given <b>Production Order</b> by evaluating the last existing Production Order Line. </summary>
+    /// <param name="Status">Specifies the <b>Production Order Status</b> used to identify the correct document context.</param>
+    /// <param name="ProdOrderNo">Specifies the <b>Production Order No.</b> from which the last line is evaluated.</param>
+    /// <returns>An <b>Integer</b> representing the next Line No.; returns <b>10000</b> when no existing lines are found.</returns>
+    /// <remarks> This procedure retrieves the Production Order header to ensure validity, then locates the last related Production Order Line and increments its Line No. by <b>10000</b> to maintain standard line spacing. </remarks>
     procedure GetLastProdOrdLinefromProdOrdHeader(Status: Enum "Production Order Status"; ProdOrderNo: Code[20]): Integer
     var
         ProdOrderRec: Record "Production Order";
@@ -2954,13 +4153,26 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             exit(10000);
     end;
 
-    local procedure Test_InsertItemJnlLine(var ItemJnlLine: Record "Item Journal Line"; var tempItemJnlLine: Record "Item Journal Line" temporary; var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line"; ProdOrderRec: Record "Production Order"; ProdOrdLineRec: Record "Prod. Order Line"; IJLEntryType: Enum "Item Ledger Entry Type"): Boolean
+    /// <summary> Creates and prepares a <b>temporary Item Journal Line</b> for <b>SOR Inspection</b> processing, supporting both <b>Output</b> and <b>Consumption</b> entry types. </summary>
+    /// <remarks> This procedure dynamically determines the <b>next Line No.</b>, assigns the correct <b>Journal Template</b> OR <b>Batch</b> from Extended Company Setup, and populates all mandatory fields based on the entry type. For <b>Output</b>, it validates bin availability, ensures <b>Lot No. Information</b> exists (or creates it from an existing lot), and transfers inspection-derived attributes such as <b>Sub Merk</b>, <b>L/R</b>, crop, cycle, and delivery details. For <b>Consumption</b>, it consumes the inspected item using the source lot, package, and bin while preserving the same traceability attributes. The created line is marked as <b>PMP15 Marked</b>, linked to the <b>Production Order</b>, and tagged with the <b>SOR-Inspection</b> production type to ensure correct downstream posting behavior. </remarks>
+    /// <param name="ItemJnlLine">Base Item Journal Line used as a reference for template and batch context.</param>
+    /// <param name="tempItemJnlLine">Temporary Item Journal Line that will be fully populated and inserted.</param>
+    /// <param name="SORInspectHeadr">SOR Inspection Package Header providing posting date and inspection context.</param>
+    /// <param name="SORInspectPkgLineRec">SOR Inspection Package Line supplying item, lot, bin, and inspection result details.</param>
+    /// <param name="ProdOrderRec">Related <b>Production Order</b> used to derive routing and operational context.</param>
+    /// <param name="ProdOrdLineRec">Production Order Line supplying output item, quantity, and location data.</param>
+    /// <param name="IJLEntryType">Specifies whether the journal line is created as <b>Output</b> or <b>Consumption</b>.</param>
+    /// <returns><b>True</b> if the temporary Item Journal Line is successfully created and inserted; otherwise, <b>false</b>.</returns>
+    local procedure Test_InsertItemJnlLineInspect(var ItemJnlLine: Record "Item Journal Line"; var tempItemJnlLine: Record "Item Journal Line" temporary; var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line"; ProdOrderRec: Record "Production Order"; ProdOrdLineRec: Record "Prod. Order Line"; IJLEntryType: Enum "Item Ledger Entry Type"): Boolean
     var
         IJL: Record "Item Journal Line";
         Item: Record Item;
         ItemJnlTemplate: Record "Item Journal Template";
         ItemJnlBatch: Record "Item Journal Batch";
         ProdOrdRoutingLine: Record "Prod. Order Routing Line";
+        OldLotNoInfoRec: Record "Lot No. Information";
+        LotNoInfoRec: Record "Lot No. Information";
+        BinContent: Record "Bin Content";
         LastLineNo: Integer;
     begin
         ExtCompanySetup.Get();
@@ -2969,6 +4181,9 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         ItemJnlBatch.Reset();
         Item.Reset();
         ProdOrdRoutingLine.Reset();
+        LotNoInfoRec.Reset();
+        OldLotNoInfoRec.Reset();
+        BinContent.Reset();
         Clear(LastLineNo);
 
         IJL.SetRange("Journal Template Name", ItemJnlLine."Journal Template Name");
@@ -2984,6 +4199,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
 
         tempItemJnlLine.Init();
         if IJLEntryType = IJLEntryType::Output then begin
+            #region OUTPUT JOURNAL INSPECTION
             if Item.Get(ProdOrdLineRec."Item No.") then begin
                 tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Output Jnl. Template";
                 tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Output Jnl. Batch";
@@ -3014,10 +4230,48 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 if ProdOrdRoutingLine.FindLast() then begin
                     tempItemJnlLine.Validate("Operation No.", ProdOrdRoutingLine."Operation No.");
                 end;
-                tempItemJnlLine.Validate("Bin Code", ProdOrdLineRec."Bin Code");
+
+                // VALIDATE BEFORE SETTING BIN CODE
+                ValidateBinContentIsExistforItemJnlLine(BinContent, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+                BinContent.SetRange("Bin Code", SORInspectPkgLineRec."To Bin Code");
+                if BinContent.FindFirst() then
+                    tempItemJnlLine.Validate("Bin Code", SORInspectPkgLineRec."To Bin Code")
+                else
+                    Error('The Bin Code %1 is not available in the Bin Content with the Item of %2 %3, on %4 Location. Please make sure the related To Bin Code is available in the Bin Content.', SORInspectPkgLineRec."To Bin Code", tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Location Code");
+                // tempItemJnlLine.Validate("Bin Code", ProdOrdLineRec."Bin Code");
+
+                // SETTING LOT NO INFORMATION
+                if not LotNoInformationIsExist(LotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SORInspectPkgLineRec."Lot No.") then begin
+                    OldLotNoInfoRec.SetRange("Item No.", SORInspectPkgLineRec."Sorted Item No.");
+                    OldLotNoInfoRec.SetRange("Variant Code", SORInspectPkgLineRec."Sorted Variant Code");
+                    OldLotNoInfoRec.SetRange("Lot No.", SORInspectPkgLineRec."Lot No.");
+                    if OldLotNoInfoRec.FindFirst() then begin
+                        LotNoInfoRec := CreateNewLotNoInformationfromOldLotNoInfo(OldLotNoInfoRec, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SORInspectPkgLineRec."Lot No.");
+                    end else begin
+                        Error('No Lot No. Information available for the Output Journal for the Sorted Item %1 - %2 during the creation of a new Lot No %3. Information record. Please review the current lot availability for the specified sorted item.', SORInspectPkgLineRec."Sorted Item No.", SORInspectPkgLineRec."Sorted Variant Code", SORInspectPkgLineRec."Lot No.");
+                    end;
+                end;
+                tempItemJnlLine."Lot No." := LotNoInfoRec."Lot No.";
+                tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                tempItemJnlLine."PMP15 Output Item No." := tempItemJnlLine."Item No.";
+                tempItemJnlLine."PMP15 Output Variant Code" := tempItemJnlLine
+                ."Variant Code";
+
+                tempItemJnlLine."PMP15 Sub Merk 1" := SORInspectPkgLineRec."New Sub Merk 1";
+                tempItemJnlLine."PMP15 Sub Merk 2" := SORInspectPkgLineRec."New Sub Merk 2";
+                tempItemJnlLine."PMP15 Sub Merk 3" := SORInspectPkgLineRec."New Sub Merk 3";
+                tempItemJnlLine."PMP15 Sub Merk 4" := SORInspectPkgLineRec."New Sub Merk 4";
+                tempItemJnlLine."PMP15 Sub Merk 5" := SORInspectPkgLineRec."New Sub Merk 5";
+                tempItemJnlLine."PMP15 L/R" := SORInspectPkgLineRec."New L/R";
             end;
+            #endregion OUTPUT JOURNAL INSPECTION
         end else if IJLEntryType = IJLEntryType::Consumption then begin
-            if Item.Get(SORInspectHeadr."Sorted Item No.") then begin
+            #region CONSUMPTION JOURNAL INSPECTION
+            if Item.Get(SORInspectPkgLineRec."Sorted Item No.") then begin
                 tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Template";
                 tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch";
                 tempItemJnlLine."Line No." := LastLineNo;
@@ -3025,6 +4279,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                     tempItemJnlLine."Source Code" := ItemJnlTemplate."Source Code";
                 end;
                 tempItemJnlLine."Source Type" := tempItemJnlLine."Source Type"::Item;
+                tempItemJnlLine."Source No." := Item."No.";
                 if ItemJnlBatch.Get(tempItemJnlLine."Journal Template Name", tempItemJnlLine."Journal Batch Name") then begin
                     if ItemJnlBatch."No. Series" <> '' then begin
                         tempItemJnlLine."Document No." := NoSeriesBatchMgmt.PeekNextNo(ItemJnlBatch."No. Series", SORInspectHeadr."Posting Date");
@@ -3035,22 +4290,43 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 tempItemJnlLine.Validate("Order No.", SORInspectPkgLineRec."Prod. Order No.");
                 tempItemJnlLine.Validate("Order Type", tempItemJnlLine."Order Type"::Production);
                 tempItemJnlLine.Validate("Item No.", Item."No.");
+                tempItemJnlLine.Validate("Source No.", Item."No.");
                 tempItemJnlLine.Description := Item.Description;
-                tempItemJnlLine.Validate("Variant Code", SORInspectHeadr."Sorted Variant Code");
+                tempItemJnlLine.Validate("Variant Code", SORInspectPkgLineRec."Sorted Variant Code");
                 tempItemJnlLine.Validate(Quantity, SORInspectPkgLineRec.Quantity);
                 tempItemJnlLine.Validate("Unit of Measure Code", SORInspectPkgLineRec."Unit of Measure Code");
                 tempItemJnlLine.Validate("Location Code", ExtCompanySetup."PMP15 SOR Location Code");
-                tempItemJnlLine.Validate("Order Line No.", SORInspectPkgLineRec."Line No.");
+                tempItemJnlLine."Order Line No." := SORInspectPkgLineRec."Line No.";
                 ProdOrdRoutingLine.SetRange("Prod. Order No.", ProdOrderRec."No.");
                 ProdOrdRoutingLine.SetRange("Routing Reference No.", tempItemJnlLine."Order Line No.");
-                if ProdOrdRoutingLine.FindLast() then begin
-                    tempItemJnlLine.Validate("Operation No.", ProdOrdRoutingLine."Operation No.");
-                end;
                 tempItemJnlLine."Lot No." := SORInspectPkgLineRec."Lot No.";
                 tempItemJnlLine."Package No." := SORInspectPkgLineRec."Package No.";
-                tempItemJnlLine.Validate("Bin Code", SORInspectPkgLineRec."From Bin Code");
+                tempItemJnlLine."Bin Code" := SORInspectPkgLineRec."From Bin Code";
+
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                LotNoInfoRec.Get(tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SORInspectPkgLineRec."Lot No.");
+
+                tempItemJnlLine."PMP15 Crop" := LotNoInfoRec."PMP14 Crop";
+                tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfoRec."PMP14 Cycle (Separately)";
+                tempItemJnlLine."Invoice No." := LotNoInfoRec."PMP14 Invoice No.";
+                tempItemJnlLine."PMP15 Delivery" := LotNoInfoRec."PMP14 Delivery";
+                tempItemJnlLine."PMP15 Cycle Code" := LotNoInfoRec."PMP14 Cycle Code";
+                tempItemJnlLine."PMP15 Output Item No." := SORInspectPkgLineRec."Sorted Item No.";
+                tempItemJnlLine."PMP15 Output Variant Code" := SORInspectPkgLineRec."Sorted Variant Code";
+
+                tempItemJnlLine."PMP15 Sub Merk 1" := SORInspectPkgLineRec."Sub Merk 1";
+                tempItemJnlLine."PMP15 Sub Merk 2" := SORInspectPkgLineRec."Sub Merk 2";
+                tempItemJnlLine."PMP15 Sub Merk 3" := SORInspectPkgLineRec."Sub Merk 3";
+                tempItemJnlLine."PMP15 Sub Merk 4" := SORInspectPkgLineRec."Sub Merk 4";
+                tempItemJnlLine."PMP15 Sub Merk 5" := SORInspectPkgLineRec."Sub Merk 5";
+                tempItemJnlLine."PMP15 L/R" := SORInspectPkgLineRec."L/R";
+                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
             end;
+            #endregion CONSUMPTION JOURNAL INSPECTION
         end;
+        tempItemJnlLine."PMP15 Marked" := true;
+        tempItemJnlLine."PMP15 Prod. Order No." := SORInspectPkgLineRec."Prod. Order No.";
+        tempItemJnlLine."PMP15 Production Type" := tempItemJnlLine."PMP15 Production Type"::"SOR-Inspection";
 
         if tempItemJnlLine.Insert() then
             exit(true)
@@ -3058,10 +4334,19 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             exit(false);
     end;
 
-    local procedure InsertItemJnlLinefromTemp(var ItemJnlLine: Record "Item Journal Line"; var tempItemJnlLine: Record "Item Journal Line" temporary; var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; IJLEntryType: Enum "Item Ledger Entry Type")
+    /// <summary> Inserts an Item Journal Line from a temporary inspection journal line into the actual Item Journal, assigning the correct document number based on the entry type and ensuring no duplicate line exists. </summary>
+    /// <remarks> This procedure:Copies data from a temporary inspection journal line into a live Item Journal Line.Assigns a new document number based on the configured journal batch No. Series.Removes any existing Item Journal Line with the same template, batch, and line number to prevent duplication.Inserts and marks the new Item Journal Line for further processing. </remarks>
+    /// <param name="ItemJnlLine">The target Item Journal Line record that will be initialized and populated from the temporary record.</param>
+    /// <param name="tempItemJnlLine"> A temporary Item Journal Line containing pre-validated inspection data to be transferred. </param> 
+    /// <param name="SORInspectHeadr"> The SOR Inspection Package Header used to determine posting context such as posting date. </param> 
+    /// <param name="IJLEntryType"> Specifies whether the journal line is created as a Consumption or Output entry, determining the journal template, batch, and document number series used. </param>
+    local procedure InsertItemJnlLinefromTempInspect(var ItemJnlLine: Record "Item Journal Line"; var tempItemJnlLine: Record "Item Journal Line" temporary; var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; IJLEntryType: Enum "Item Ledger Entry Type")
     var
         ItemJnlBatch: Record "Item Journal Batch";
+        IJL: Record "Item Journal Line";
     begin
+        ItemJnlBatch.Reset();
+        IJL.Reset();
         ExtCompanySetup.Get();
 
         if IJLEntryType = IJLEntryType::Consumption then begin
@@ -3082,16 +4367,113 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             end;
         end;
 
+        IJL.SetRange("Journal Template Name", ItemJnlLine."Journal Template Name");
+        IJL.SetRange("Journal Batch Name", ItemJnlLine."Journal Batch Name");
+        IJL.SetRange("Line No.", ItemJnlLine."Line No.");
+        if IJL.FindFirst() then begin
+            IJL.Delete(true);
+        end;
+
         ItemJnlLine.Insert();
+        ItemJnlLine.Mark(true);
+    end;
+
+    /// <summary>Creates and inserts production order lines from selected SOR inspection packing lines based on inspection results, and links them back to the originating inspection records.</summary>
+    local procedure CreateNewProdOrderSortationInspectionPackingLine(var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; var ProdOrderRec: Record "Production Order"; intLastLineNo: Integer)
+    var
+        SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line";
+        PackageNoInfor: Record "Package No. Information";
+        ProdOrdLineRec: Record "Prod. Order Line";
+        ItemRec: Record Item;
+    begin
+        SORInspectPkgLineRec.SetFilter("Prod. Order No.", '%1', '');
+        SORInspectPkgLineRec.SetRange("Document No.", SORInspectHeadr."No.");
+        SORInspectPkgLineRec.SetRange(Select, true);
+        SORInspectPkgLineRec.SetRange(Process, false);
+        if SORInspectPkgLineRec.FindSet() then
+            repeat
+                PackageNoInfor.Reset();
+                // ItemVariantRec.Reset();
+                if SORInspectPkgLineRec.Result in [SORInspectPkgLineRec.Result::Accepted, SORInspectPkgLineRec.Result::"Item Change", SORInspectPkgLineRec.Result::Rework] then begin
+                    ProdOrdLineRec.Init();
+                    ItemRec.Get(SORInspectPkgLineRec."New Item Code");
+                    ProdOrdLineRec.Status := ProdOrderRec.Status;
+                    ProdOrdLineRec."Prod. Order No." := ProdOrderRec."No.";
+                    ProdOrdLineRec."Line No." := intLastLineNo;
+                    // ProdOrdLineRec."Routing Reference No." := ProdOrdLineRec."Line No.";
+                    if SORInspectPkgLineRec.Result in [SORInspectPkgLineRec.Result::Accepted, SORInspectPkgLineRec.Result::"Item Change"] then begin
+                        ProdOrdLineRec.Validate("Item No.", SORInspectPkgLineRec."New Item Code");
+                        ProdOrdLineRec."Location Code" := ExtCompanySetup."PMP15 SOR Location Code";
+                        ProdOrdLineRec.Validate("Variant Code", SORInspectPkgLineRec.Standard);
+                        // ProdOrdLineRec.Validate("Bin Code", SORInspectPkgLineRec."To Bin Code");
+                        ProdOrdLineRec."Bin Code" := SORInspectPkgLineRec."To Bin Code";
+                        ProdOrdLineRec.Validate(Quantity, SORInspectPkgLineRec.Quantity);
+                        ProdOrdLineRec.Validate("Unit of Measure Code", SORInspectPkgLineRec."Unit of Measure Code");
+                    end else if SORInspectPkgLineRec.Result = SORInspectPkgLineRec.Result::Rework then begin
+                        // reference GetPackagetoInspect
+                        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                        ProdOrdLineRec.Validate("Item No.", SORInspectPkgLineRec."New Item Code");
+                        ProdOrdLineRec."Location Code" := ExtCompanySetup."PMP15 SOR Location Code";
+                        ProdOrdLineRec.Validate("Variant Code", SORInspectPkgLineRec.Standard);
+                        ProdOrdLineRec.Validate("Bin Code", SORInspectPkgLineRec."To Bin Code");
+                        ProdOrdLineRec.Validate(Quantity, SORInspectPkgLineRec.Quantity);
+                        ProdOrdLineRec.Validate("Unit of Measure Code", SORInspectPkgLineRec."Unit of Measure Code");
+
+                        // PackageNoInfor.SetRange("Item No.", SORInspectPkgLineRec."Sorted Item No.");
+                        // PackageNoInfor.SetRange("Variant Code", SORInspectHeadr."Sorted Variant Code");
+                        // PackageNoInfor.SetRange("Package No.", SORInspectPkgLineRec."Package No.");
+                        // PackageNoInfor.SetFilter("PMP04 Lot No.", SORInspectPkgLineRec."Lot No.");
+                        // PackageNoInfor.SetRange("PMP15 Able to Sell", true);
+                        // PackageNoInfor.SetRange("PMP15 SOR Inspection Pckg. No.", SORInspectHeadr."No.");
+                        // if PackageNoInfor.FindFirst() then begin
+                        //     // ProdOrdLineRec.Validate("Item No.", PackageNoInfor."PMP15 Unsorted Item No."); // Before
+                        //     // ProdOrdLineRec.Validate("Variant Code", PackageNoInfor."PMP15 Unsorted Variant Code"); // Before
+                        // end;
+                        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    end;
+                    ProdOrdLineRec."Scrap %" := ItemRec."Scrap %";
+                    ProdOrdLineRec."Due Date" := ProdOrderRec."Due Date";
+                    ProdOrdLineRec."Starting Date" := ProdOrderRec."Starting Date";
+                    ProdOrdLineRec."Starting Time" := ProdOrderRec."Starting Time";
+                    ProdOrdLineRec."Ending Date" := ProdOrderRec."Ending Date";
+                    ProdOrdLineRec."Ending Time" := ProdOrderRec."Ending Time";
+                    ProdOrdLineRec."Planning Level Code" := 0;
+                    ProdOrdLineRec."Inventory Posting Group" := ItemRec."Inventory Posting Group";
+                    ProdOrdLineRec.UpdateDatetime();
+                    ProdOrdLineRec.Validate("Unit Cost");
+                    ProdOrdLineRec.Insert();
+                    intLastLineNo += 10000;
+
+                    SORInspectPkgLineRec."Prod. Order No." := ProdOrderRec."No.";
+                    SORInspectPkgLineRec."Prod. Order Line No." := ProdOrdLineRec."Line No.";
+                    SORInspectPkgLineRec.Modify();
+                end;
+            until SORInspectPkgLineRec.Next() = 0;
     end;
 
     // ONE OF THE MOST IMPORTANT FUNCTION IN THIS CODEUNIT
-    procedure ProcessSORInpectPkgList(var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr")
+    /// <summary> Processes a list of items from a Sortation (SOR) Inspection Package. This critical procedure manages the workflow from inspection to <b>inventory posting</b>, including <b>production order creation</b>, <b>journal posting</b>, and handling of rework/rejected items. </summary>
+    /// <remarks> Orchestrates multiple complex operations:
+    /// 1. Validates inspection package lines for item variant consistency
+    /// 2. Creates/retrieves production orders for inspection process
+    /// 3. Generates production order lines for selected inspection items
+    /// 4. Posts output/consumption journals based on inspection results (Accepted/Item Change/Rework)
+    /// 5. Manages rework by creating new sortation production orders
+    /// 6. Updates inspection package status upon completion
+    /// Handles different inspection results:
+    /// - Accepted/Item Change/Rework: Posts output and consumption journals
+    /// - Rework: Additionally creates new production orders for re-processing
+    /// - Rejected: Marks items as processed without journal posting
+    ///  Requires proper setup of SOR journal templates/batches in extension company setup. </remarks>
+    /// <param name="SORInspectHeadr">The header record of the SOR Inspection Package to be processed. Passed by reference and updated with final document status upon completion.</param>
+    /// <param name="IsSuppressCommit">Controls commit behavior during journal posting. TRUE: Suppresses commits for manual journal review before posting FALSE: Proceeds with normal commit flow after journal creation</param>
+    procedure ProcessSORInpectPkgList(var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; IsSuppressCommit: Boolean)
     var
+        ProdOrderStatusMgmt: Codeunit "Prod. Order Status Management";
         SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line";
-        ItemRec: Record Item;
-        ItemVariantRec: Record "Item Variant";
-        PackageNoInfor: Record "Package No. Information";
+        // ItemRec: Record Item;
+        // ItemVariantRec: Record "Item Variant";
+        // PackageNoInfor: Record "Package No. Information";
         ProdOrderRec2: Record "Production Order";
         ProdOrderRec: Record "Production Order";                // PRODUCTION ORDER (HEADER)
         tempProdOrderRec: Record "Production Order" temporary;  // PRODUCTION ORDER (HEADER) TEMP
@@ -3100,10 +4482,13 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         ItemJnlLine: Record "Item Journal Line";                // ITEM JOURNAL LINE
         ItemJnlLine2: Record "Item Journal Line";               // ------ IDEN ------
         SORProdOrdCreationRec: Record "PMP15 Sortation PO Creation" temporary;
+        NewStatus: Enum "Production Order Status";
         intLastLineNo: Integer;
-        IsSuccessInsertItemJnlLine: Boolean;
+        IsSuccessInsertItemJnlLine, IsExistingProdOrderNoFound : Boolean;
     begin
         Clear(intLastLineNo);
+        Clear(IsSuccessInsertItemJnlLine);
+        Clear(IsExistingProdOrderNoFound);
         SORInspectPkgLineRec.Reset();
         ProdOrderRec.Reset();
         ProdOrderRec2.Reset();
@@ -3117,77 +4502,41 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         ValidateSORInspectPkgLineforItemVariantCheck(SORInspectHeadr);
 
         #region GET PRODUCTION ORDER
-        ProdOrderRec.SetRange("PMP15 SOR Inspection Pkg. No.", SORInspectHeadr."No.");
-        ProdOrderRec.SetRange(Status, ProdOrderRec.Status::Released);
-        if not ProdOrderRec.FindFirst() then
-            if SimulateInsertSuccess(tempProdOrderRec, SORInspectHeadr) then
+        // ProdOrderRec.SetRange("PMP15 SOR Inspection Pkg. No.", SORInspectHeadr."No.");
+        // ProdOrderRec.SetRange(Status, ProdOrderRec.Status::Released);
+        // if not ProdOrderRec.FindFirst() then
+        //     if SimulateInsertSuccess(tempProdOrderRec, SORInspectHeadr) then
+        //         InsertProdOrderfromTemp(tempProdOrderRec, ProdOrderRec); // C.1.1
+
+        IsExistingProdOrderNoFound := IsInspectionProductionOrderisExist(SORInspectHeadr, ProdOrderRec); // if found, marked
+        if not IsExistingProdOrderNoFound then begin
+            if SimulateInsertSuccess(tempProdOrderRec, SORInspectHeadr) then // marked
                 InsertProdOrderfromTemp(tempProdOrderRec, ProdOrderRec); // C.1.1
+
+            intLastLineNo := GetLastProdOrdLinefromProdOrdHeader(ProdOrderRec.Status, ProdOrderRec."No.");
+
+        end;
         #endregion GET PRODUCTION ORDER
 
-        intLastLineNo := GetLastProdOrdLinefromProdOrdHeader(ProdOrderRec.Status, ProdOrderRec."No.");
-
         #region CREATE PRODUCTION ORDER LINE
-        SORInspectPkgLineRec.SetRange("Document No.", SORInspectHeadr."No.");
-        SORInspectPkgLineRec.SetRange(Select, true);
-        SORInspectPkgLineRec.SetRange(Process, false);
-        if SORInspectPkgLineRec.FindSet() then
-            repeat
-                PackageNoInfor.Reset();
-                ItemVariantRec.Reset();
-                if SORInspectPkgLineRec.Result in [SORInspectPkgLineRec.Result::Accepted, SORInspectPkgLineRec.Result::"Item Change", SORInspectPkgLineRec.Result::Rework] then begin
-                    ProdOrdLineRec.Init();
-                    ItemRec.Get(SORInspectPkgLineRec."New Item Code");
-                    ProdOrdLineRec.Status := ProdOrderRec.Status;
-                    ProdOrdLineRec."Prod. Order No." := ProdOrderRec."No.";
-                    ProdOrdLineRec."Line No." := intLastLineNo;
-                    ProdOrdLineRec."Routing Reference No." := ProdOrdLineRec."Line No.";
-                    if SORInspectPkgLineRec.Result in [SORInspectPkgLineRec.Result::Accepted, SORInspectPkgLineRec.Result::"Item Change"] then begin
-                        ProdOrdLineRec.Validate("Item No.", SORInspectPkgLineRec."New Item Code");
-                        ProdOrdLineRec."Location Code" := ExtCompanySetup."PMP15 SOR Location Code";
-                        ProdOrdLineRec.Validate("Variant Code", SORInspectPkgLineRec.Standard);
-                        ProdOrdLineRec.Validate("Bin Code", SORInspectPkgLineRec."To Bin Code");
-                        ProdOrdLineRec.Validate(Quantity, SORInspectPkgLineRec.Quantity);
-                        ProdOrdLineRec.Validate("Unit of Measure Code", SORInspectPkgLineRec."Unit of Measure Code");
-                    end else if SORInspectPkgLineRec.Result = SORInspectPkgLineRec.Result::Rework then begin
-                        // reference GetPackagetoInspect
-                        PackageNoInfor.SetRange("Item No.", SORInspectPkgLineRec."New Item Code");
-                        PackageNoInfor.SetRange("Variant Code", SORInspectHeadr."Sorted Variant Code");
-                        PackageNoInfor.SetRange("Package No.", SORInspectPkgLineRec."Package No.");
-                        PackageNoInfor.SetFilter("PMP04 Lot No.", SORInspectPkgLineRec."Lot No.");
-                        PackageNoInfor.SetRange("PMP15 Able to Sell", true);
-                        PackageNoInfor.SetRange("PMP15 SOR Inspection Pckg. No.", SORInspectHeadr."No.");
-                        if PackageNoInfor.FindFirst() then begin
-                            ProdOrdLineRec.Validate("Item No.", PackageNoInfor."PMP15 Unsorted Item No.");
-                            ProdOrdLineRec."Location Code" := ExtCompanySetup."PMP15 SOR Location Code";
-                            ProdOrdLineRec.Validate("Variant Code", PackageNoInfor."PMP15 Unsorted Variant Code");
-                            ProdOrdLineRec.Validate("Bin Code", SORInspectPkgLineRec."To Bin Code");
-                            ProdOrdLineRec.Validate(Quantity, SORInspectPkgLineRec.Quantity);
-                            ProdOrdLineRec.Validate("Unit of Measure Code", SORInspectPkgLineRec."Unit of Measure Code");
-                        end;
-                    end;
-                    ProdOrdLineRec."Scrap %" := ItemRec."Scrap %";
-                    ProdOrdLineRec."Due Date" := ProdOrderRec."Due Date";
-                    ProdOrdLineRec."Starting Date" := ProdOrderRec."Starting Date";
-                    ProdOrdLineRec."Starting Time" := ProdOrderRec."Starting Time";
-                    ProdOrdLineRec."Ending Date" := ProdOrderRec."Ending Date";
-                    ProdOrdLineRec."Ending Time" := ProdOrderRec."Ending Time";
-                    ProdOrdLineRec."Planning Level Code" := 0;
-                    ProdOrdLineRec."Inventory Posting Group" := ItemRec."Inventory Posting Group";
-                    ProdOrdLineRec.UpdateDatetime();
-                    ProdOrdLineRec.Validate("Unit Cost");
-                    ProdOrdLineRec.Insert();
-                    intLastLineNo += intLastLineNo + 10000;
-
-                    SORInspectPkgLineRec."Prod. Order No." := ProdOrderRec."No.";
-                    SORInspectPkgLineRec."Prod. Order Line No." := ProdOrdLineRec."Line No.";
-                    SORInspectPkgLineRec.Modify();
-                end;
-            until SORInspectPkgLineRec.Next() = 0;
+        CreateNewProdOrderSortationInspectionPackingLine(SORInspectHeadr, ProdOrderRec, intLastLineNo);
         #endregion CREATE PRODUCTION ORDER LINE
 
-        // c.1.5  Run Refresh Production Order Function for the Released Prod. Order
         Commit();
-        RunRefreshProdOrder(ProdOrderRec, 1, false, true, false, false);
+        // c.1.5  Run Refresh Production Order Function for the Released Prod. Order
+        if RunRefreshProdOrder(ProdOrderRec, 1, false, true, false, false) then begin
+            // 
+        end else if (ProdOrderRec.Status in [ProdOrderRec.Status::Planned, ProdOrderRec.Status::"Firm Planned", ProdOrderRec.Status::Simulated]) then begin
+            ProdOrderRec.MarkedOnly(true);
+            ProdOrderRec.DeleteAll();
+        end;
+
+        // Change the status of the related production order to released. Sinc
+        if ProdOrderRec.Status <> ProdOrderRec.Status::Released then begin
+            ProdOrderStatusMgmt.ChangeProdOrderStatus(ProdOrderRec, NewStatus::Released, WorkDate(), true);
+            Commit();
+            ProdOrderRec.Mark(true);
+        end;
 
         ProdOrdLineRec.Reset();
         SORInspectPkgLineRec.Reset();
@@ -3196,24 +4545,28 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         SORInspectPkgLineRec.SetRange(Process, false);
         if SORInspectPkgLineRec.FindSet() then
             repeat
+                ProdOrderRec.SetRange(Status, ProdOrderRec.Status::Released);
+                ProdOrderRec.SetRange("No.", SORInspectPkgLineRec."Prod. Order No.");
+                if ProdOrderRec.FindFirst() then begin end;
                 if SORInspectPkgLineRec.Result in [SORInspectPkgLineRec.Result::Accepted, SORInspectPkgLineRec.Result::"Item Change", SORInspectPkgLineRec.Result::Rework] then begin
                     if ProdOrdLineRec.Get(ProdOrderRec.Status, SORInspectPkgLineRec."Prod. Order No.", SORInspectPkgLineRec."Prod. Order Line No.") then begin
                         // OUTPUT JOURNAL
                         ItemJnlLine.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Output Jnl. Template");
                         ItemJnlLine.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Output Jnl. Batch");
+                        ItemJnlLine.SetRange("PMP15 Marked", true);
                         if ItemJnlLine.FindLast() OR (ItemJnlLine.Count = 0) then begin // As Validation before insertion
-                            IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, ProdOrderRec, ProdOrdLineRec, ItemJnlLine."Entry Type"::Output);
+                            IsSuccessInsertItemJnlLine := Test_InsertItemJnlLineInspect(ItemJnlLine, tempItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, ProdOrderRec, ProdOrdLineRec, ItemJnlLine."Entry Type"::Output);
                         end;
                         if IsSuccessInsertItemJnlLine then begin
                             ItemJnlLine.Reset();
-                            InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SORInspectHeadr, ItemJnlLine."Entry Type"::Output);
-                            GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec);
-                            ItemJnlLine2 := ItemJnlLine;
-                            ItemJnlLine.PostingItemJnlFromProduction(false);
-                            Commit();
+                            InsertItemJnlLinefromTempInspect(ItemJnlLine, tempItemJnlLine, SORInspectHeadr, ItemJnlLine."Entry Type"::Output);
+                            GenerateRecReserveEntryItemJnlLineInspect(ItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec);
+                            // ItemJnlLine2 := ItemJnlLine;
+                            // ItemJnlLine.PostingItemJnlFromProduction(false);
+                            // Commit();
 
                             Clear(IsSuccessInsertItemJnlLine);
-                            ItemJnlLine2.Reset();
+                            // ItemJnlLine2.Reset();
                             tempItemJnlLine.DeleteAll();
                         end else
                             Error('Failed to creating the Output Journal before posting.');
@@ -3221,14 +4574,26 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         // CONSUMPTION JOURNAL
                         ItemJnlLine2.SetRange("Journal Template Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Template");
                         ItemJnlLine2.SetRange("Journal Batch Name", ExtCompanySetup."PMP15 SOR Consum.Jnl. Batch");
+                        ItemJnlLine2.SetRange("PMP15 Marked", true);
                         if ItemJnlLine2.FindLast() OR (ItemJnlLine2.Count = 0) then begin // As Validation before insertion
-                            IsSuccessInsertItemJnlLine := Test_InsertItemJnlLine(ItemJnlLine, tempItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, ProdOrderRec, ProdOrdLineRec, ItemJnlLine."Entry Type"::Consumption);
+                            IsSuccessInsertItemJnlLine := Test_InsertItemJnlLineInspect(ItemJnlLine2, tempItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, ProdOrderRec, ProdOrdLineRec, ItemJnlLine."Entry Type"::Consumption);
                         end;
                         if IsSuccessInsertItemJnlLine then begin
                             ItemJnlLine2.Reset();
-                            InsertItemJnlLinefromTemp(ItemJnlLine, tempItemJnlLine, SORInspectHeadr, ItemJnlLine."Entry Type"::Output);
-                            GenerateRecReserveEntryItemJnlLine(ItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec);
-                            ItemJnlLine2.PostingItemJnlFromProduction(false);
+                            InsertItemJnlLinefromTempInspect(ItemJnlLine2, tempItemJnlLine, SORInspectHeadr, ItemJnlLine2."Entry Type"::Consumption);
+                            GenerateRecReserveEntryItemJnlLineInspect(ItemJnlLine2, SORInspectHeadr, SORInspectPkgLineRec);
+                            // ItemJnlLine2.PostingItemJnlFromProduction(false);
+
+                            if not IsSuppressCommit then begin
+                                Commit();
+                                Error('Der Prozess ist angehalten. Bitte prüfen Sie das Output- und Verbrauchs-journal, um die zu überprüfen.');
+                            end;
+                            if PreviewPostingItemJournalLine(ItemJnlLine, ItemJnlLine2) then begin
+                                PostOUTPUTandthenCONSUMPItemJnlLineforSORInspection(ItemJnlLine, ItemJnlLine2);
+                            end else begin
+                                DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+                                DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine2);
+                            end;
                         end else
                             Error('Failed to creating the Consumption Journal after posting the Output Journal.');
 
@@ -3236,12 +4601,15 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         SORInspectPkgLineRec.Modify();
 
                         if SORInspectPkgLineRec.Result = SORInspectPkgLineRec.Result::Rework then begin
-                            // CREATE NEW SOR PROD ORDER
+                            // CREATE NEW SOR PROD ORDER CREATION
                             tempProdOrderRec.DeleteAll();
-                            NewSORProdOrderCreation(SORProdOrdCreationRec, SORInspectHeadr, SORInspectPkgLineRec);
-                            ValidateInputBeforePosting(SORProdOrdCreationRec);
-                            if SimulateInsertSuccess(tempProdOrderRec, SORProdOrdCreationRec) then begin
-                                SortProdOrdCreationPost(ProdOrderRec2, tempProdOrderRec, SORProdOrdCreationRec);
+                            if NewSORProdOrderCreation(SORProdOrdCreationRec, SORInspectHeadr, SORInspectPkgLineRec) then begin
+                                ValidateInputBeforePosting(SORProdOrdCreationRec);
+                                if SimulateInsertSuccess(tempProdOrderRec, SORProdOrdCreationRec) then begin
+                                    SortProdOrdCreationPost(ProdOrderRec2, tempProdOrderRec, SORProdOrdCreationRec);
+                                end else begin
+                                    Error('Failed to create the Sortation Production Order during the creation process. %1', GetLastErrorText());
+                                end;
                             end;
                         end;
                     end;
@@ -3256,6 +4624,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         SORInspectHeadr.Modify();
     end;
 
+    /// <summary><b>Determines</b> and returns the <b>document status</b> (Partially Processed/Fully Processed) of an SOR Inspection Package header based on whether all its <b>lines</b> have been <b>processed</b>.</summary>
     local procedure CheckStatusofSORInspectHeaderAfterPosting(var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"): enum "PMP15 SOR Inspection Doc. Type"
     var
         SORInspectPkgLine: Record "PMP15 SOR Inspection Pkg. Line";
@@ -3269,31 +4638,75 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             exit(SORInspectHeadr."Document Status"::"Fully Processed");
     end;
 
-    local procedure NewSORProdOrderCreation(var SORProdOrdCreationRec: Record "PMP15 Sortation PO Creation" temporary; var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line")
+    /// <summary><b>Creates a new temporary sortation production order creation record for rework</b> scenarios by initializing it with data from the inspection line and validating required company setup fields.</summary>
+    local procedure NewSORProdOrderCreation(var SORProdOrdCreationRec: Record "PMP15 Sortation PO Creation" temporary; var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line"): Boolean
     var
         Status: Enum "Production Order Status";
+        ProdOrderRec: Record "Production Order";
     begin
         SORProdOrdCreationRec.DeleteAll();
         Clear(Status);
+        ProdOrderRec.Reset();
         ExtCompanySetup.Get();
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Item Owner Internal"));
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 Sort-Prod. Order Nos."));
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Location Code"));
 
+        ProdOrderRec.SetRange("Source No.", SORInspectPkgLineRec."Sorted Item No.");
+        ProdOrderRec.SetRange("Variant Code", SORInspectPkgLineRec."Sorted Variant Code");
+        ProdOrderRec.SetRange("Location Code", SORInspectPkgLineRec."Location Code");
+        ProdOrderRec.SetRange("PMP15 SOR Inspection Pkg. No.", SORInspectHeadr."No.");
+        if ProdOrderRec.FindFirst() then begin
+            exit(false);
+        end;
+
         SORProdOrdCreationRec.Init();
         SORProdOrdCreationRec.Validate(Rework, true);
-        SORProdOrdCreationRec.Validate("Sorted Item No.", SORInspectHeadr."Sorted Item No.");
-        SORProdOrdCreationRec.Validate("Sorted Variant Code", SORInspectHeadr."Sorted Variant Code");
-        SORProdOrdCreationRec.Validate("Lot No.", SORInspectHeadr."Lot No.");
+        // SORProdOrdCreationRec.Validate("Sorted Item No.", SORInspectHeadr."Sorted Item No.");
+        // SORProdOrdCreationRec.Validate("Sorted Variant Code", SORInspectHeadr."Sorted Variant Code");
+        SORProdOrdCreationRec.Validate("Sorted Item No.", SORInspectPkgLineRec."Sorted Item No.");
+        SORProdOrdCreationRec.Validate("Sorted Variant Code", SORInspectPkgLineRec."Sorted Variant Code");
+        SORProdOrdCreationRec.Validate("Lot No.", SORInspectPkgLineRec."Lot No.");
         SORProdOrdCreationRec.Validate(Quantity, SORInspectPkgLineRec.Quantity);
         SORProdOrdCreationRec.Validate("Reference No.", SORInspectPkgLineRec."Prod. Order No.");
         SORProdOrdCreationRec.Validate("Reference Line No.", SORInspectPkgLineRec."Prod. Order Line No.");
         SORProdOrdCreationRec."PMP15 Item Owner Internal" := ExtCompanySetup."PMP15 SOR Item Owner Internal";
         Status := Status::"Firm Planned";
-        SORProdOrdCreationRec.Insert();
+        exit(SORProdOrdCreationRec.Insert());
     end;
 
-    procedure GenerateRecReserveEntryItemJnlLine(var RecItemJnlLine: Record "Item Journal Line"; SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line")
+    /// <summary>Checks if a <b>Released Production Order</b> already exists for any line in the specified SOR Inspection Package, returning TRUE and populating ProdOrderRec if found.</summary>
+    local procedure IsInspectionProductionOrderisExist(var SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; var ProdOrderRec: Record "Production Order"): Boolean
+    var
+        ReleasedProdOrderRec: Record "Production Order";
+        SORInspectPkgLine: Record "PMP15 SOR Inspection Pkg. Line";
+        IsExistingProdOrderNoFound: Boolean;
+    begin
+        Clear(IsExistingProdOrderNoFound);
+        SORInspectPkgLine.Reset();
+
+        SORInspectPkgLine.SetRange("Document No.", SORInspectHeadr."No.");
+        if SORInspectPkgLine.FindSet() then
+            repeat
+                ReleasedProdOrderRec.Reset();
+                ReleasedProdOrderRec.SetRange(Status, ReleasedProdOrderRec.Status::Released);
+                ReleasedProdOrderRec.SetRange("No.", SORInspectPkgLine."Prod. Order No.");
+                if ReleasedProdOrderRec.FindFirst() then begin
+                    IsExistingProdOrderNoFound := true;
+                    ProdOrderRec := ReleasedProdOrderRec;
+                    ProdOrderRec.Mark(true);
+                    exit(true);
+                end;
+            until (SORInspectPkgLine.Next() = 0) OR IsExistingProdOrderNoFound;
+        exit(false);
+    end;
+
+    /// <summary>Generates <b>Reservation Entries</b> for Item Journal Lines during SOR inspection posting based on <b>Item Tracking Code</b> settings and available package/lot information.</summary>
+    /// <remarks>Creates reservation entries for OUTPUT or CONSUMPTION journal lines by first validating the item and its tracking code, then sourcing lot/package data from a temporary summary table, package inventory, or the inspection line itself, before finally inserting the reservation record.</remarks>
+    /// <param name="RecItemJnlLine">The Item Journal Line record for which to generate reservation entries. Passed by reference as it may be modified.</param>
+    /// <param name="SORInspectHeadr">SOR Inspection Package Header containing lot number and document context.</param>
+    /// <param name="SORInspectPkgLineRec">SOR Inspection Package Line with package number, quantity, and item details.</param>
+    procedure GenerateRecReserveEntryItemJnlLineInspect(var RecItemJnlLine: Record "Item Journal Line"; SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line")
     var
         Item: Record Item;
         RecReservEntry: Record "Reservation Entry";
@@ -3305,8 +4718,8 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         Clear(SerLotPkgArr);
         ItemTrackingCode.Reset();
 
-        if RecItemJnlLine.ReservEntryExist() then
-            Error('Item tracking information already exists for this reclassification journal line. Please remove the existing tracking before proceeding.');
+        // if RecItemJnlLine.ReservEntryExist() then
+        //     Error('Item tracking information already exists for this reclassification journal line. Please remove the existing tracking before proceeding.');
 
         Item.SetLoadFields("Item Tracking Code");
         if not Item.Get(RecItemJnlLine."Item No.") then
@@ -3321,42 +4734,85 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         ItemTrackingCode.Get(Item."Item Tracking Code");
 
         if RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Output then begin
-            SerLotPkgArr[1] := '';
-            if ItemTrackingCode."Lot Specific Tracking" then
-                SerLotPkgArr[2] := SORInspectHeadr."Lot No."
-            else if ItemTrackingCode."Package Specific Tracking" then
-                SerLotPkgArr[3] := SORInspectPkgLineRec."Package No.";
+            // SerLotPkgArr[1] := '';
+            // if ItemTrackingCode."Lot Specific Tracking" then
+            //     SerLotPkgArr[2] := SORInspectHeadr."Lot No."
+            // else if ItemTrackingCode."Package Specific Tracking" then
+            //     SerLotPkgArr[3] := SORInspectPkgLineRec."Package No.";
 
-            InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, SerLotPkgArr);
+            // InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, SerLotPkgArr);
+
+            ItemJnlLineReserve.InitFromItemJnlLine(TempTrackingSpecification, RecItemJnlLine);
+            TempTrackingSpecification.Insert();
+            RetrieveLookupData(TempTrackingSpecification, true);
+            TempTrackingSpecification.Delete();
+            TempGlobalEntrySummary.Reset();
+            TempGlobalEntrySummary.SetFilter("Lot No.", SORInspectHeadr."Lot No.");
+            TempGlobalEntrySummary.SetFilter("Package No.", SORInspectPkgLineRec."Package No.");
+            if TempGlobalEntrySummary.FindSet() then begin
+                SerLotPkgArr[1] := '';
+                if ItemTrackingCode."Lot Specific Tracking" then
+                    SerLotPkgArr[2] := TempGlobalEntrySummary."Lot No.";
+                if ItemTrackingCode."Package Specific Tracking" then
+                    SerLotPkgArr[3] := TempGlobalEntrySummary."Package No.";
+                InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, SerLotPkgArr);
+            end else begin
+                PackageNoInfo.SetAutoCalcFields("PMP04 Bin Code", Inventory, "PMP04 Lot No.");
+                PackageNoInfo.SetRange("Item No.", RecItemJnlLine."Item No.");
+                PackageNoInfo.SetRange("PMP04 Lot No.", SORInspectHeadr."Lot No.");
+                PackageNoInfo.SetFilter("Variant Code", RecItemJnlLine."Variant Code");
+                PackageNoInfo.SetFilter("PMP04 Bin Code", RecItemJnlLine."Bin Code");
+                if PackageNoInfo.FindFirst() then begin
+                    SerLotPkgArr[1] := '';
+                    if ItemTrackingCode."Lot Specific Tracking" then
+                        SerLotPkgArr[2] := PackageNoInfo."PMP04 Lot No.";
+                    if ItemTrackingCode."Package Specific Tracking" then
+                        SerLotPkgArr[3] := PackageNoInfo."Package No.";
+                    InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, SerLotPkgArr);
+                end else begin
+                    if ItemTrackingCode."Lot Specific Tracking" then
+                        SerLotPkgArr[2] := SORInspectPkgLineRec."Lot No.";
+                    if ItemTrackingCode."Package Specific Tracking" then
+                        SerLotPkgArr[3] := SORInspectPkgLineRec."Package No.";
+                    InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, SerLotPkgArr);
+                end;
+            end;
         end else if RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Consumption then begin
             ItemJnlLineReserve.InitFromItemJnlLine(TempTrackingSpecification, RecItemJnlLine);
             TempTrackingSpecification.Insert();
             RetrieveLookupData(TempTrackingSpecification, true);
             TempTrackingSpecification.Delete();
             TempGlobalEntrySummary.Reset();
-            TempGlobalEntrySummary.SetFilter("Lot No.", RecItemJnlLine."Lot No.");
+            TempGlobalEntrySummary.SetFilter("Lot No.", SORInspectHeadr."Lot No.");
             TempGlobalEntrySummary.SetFilter("Package No.", RecItemJnlLine."Package No.");
             if TempGlobalEntrySummary.FindSet() then begin
-                SerLotPkgArr[1] := TempGlobalEntrySummary."Serial No.";
-                SerLotPkgArr[2] := TempGlobalEntrySummary."Lot No.";
-                SerLotPkgArr[3] := TempGlobalEntrySummary."Package No.";
+                // SerLotPkgArr[1] := TempGlobalEntrySummary."Serial No.";
+                SerLotPkgArr[1] := '';
+                if ItemTrackingCode."Lot Specific Tracking" then
+                    SerLotPkgArr[2] := TempGlobalEntrySummary."Lot No.";
+                if ItemTrackingCode."Package Specific Tracking" then
+                    SerLotPkgArr[3] := TempGlobalEntrySummary."Package No.";
                 InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, SerLotPkgArr);
             end else begin
-                PackageNoInfo.SetAutoCalcFields();
+                PackageNoInfo.SetAutoCalcFields("PMP04 Bin Code", Inventory, "PMP04 Lot No.");
                 PackageNoInfo.SetRange("Item No.", RecItemJnlLine."Item No.");
+                PackageNoInfo.SetRange("PMP04 Lot No.", SORInspectHeadr."Lot No.");
                 PackageNoInfo.SetFilter("Variant Code", RecItemJnlLine."Variant Code");
+                PackageNoInfo.SetFilter("PMP04 Bin Code", RecItemJnlLine."Bin Code");
                 // PackageNoInfo.SetFilter("PMP04 Bin Code", RecItemJnlLine."Bin Code");
-                PackageNoInfo.SetRange(Inventory, 0);
                 if PackageNoInfo.FindFirst() then begin
                     SerLotPkgArr[1] := '';
-                    SerLotPkgArr[2] := PackageNoInfo."PMP04 Lot No.";
-                    SerLotPkgArr[3] := PackageNoInfo."Package No.";
+                    if ItemTrackingCode."Lot Specific Tracking" then
+                        SerLotPkgArr[2] := PackageNoInfo."PMP04 Lot No.";
+                    if ItemTrackingCode."Package Specific Tracking" then
+                        SerLotPkgArr[3] := PackageNoInfo."Package No.";
                     InsertReservEntryRecfromTempTrackSpecIJL(RecReservEntry, TempTrackingSpecification, RecItemJnlLine, SORInspectHeadr, SORInspectPkgLineRec, SerLotPkgArr);
                 end;
             end;
         end;
     end;
 
+    /// <summary>Inserts a new <b>Reservation Entry</b> by preparing a <b>Tracking Specification</b> from an Item Journal Line and registering the change with serial/lot/package tracking data from the provided array.</summary>
     local procedure InsertReservEntryRecfromTempTrackSpecIJL(var RecReservEntry: Record "Reservation Entry"; var TempTrackingSpecification: Record "Tracking Specification" temporary; var RecItemJnlLine: Record "Item Journal Line"; SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line"; SerLotPkgArr: array[3] of Code[50])
     var
         SourceTrackingSpecification: Record "Tracking Specification";
@@ -3400,7 +4856,29 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         ItemTrackingLine.RegisterChange(TempTrackingSpecification, TempTrackingSpecification, ChangeType::Insert, false);
     end;
 
+    /// <summary>Posts the <b>marked OUTPUT journal lines</b> first, then the <b>marked CONSUMPTION journal lines</b>, and finally deletes all posted lines from both journal batches.</summary>
+    local procedure PostOUTPUTandthenCONSUMPItemJnlLineforSORInspection(var ItemJnlLine: Record "Item Journal Line"; var ItemJnlLine2: Record "Item Journal Line")
+    var
+        ItemJnlPostMgmt: Codeunit "Item Jnl.-Post";
+        ItemJnlBatchPostMgmt: Codeunit "Item Jnl.-Post Batch";
+        ItemJnlPostLineMgmt: Codeunit "Item Jnl.-Post Line";
+    begin
+        ItemJnlLine.MarkedOnly(true);
+        ItemJnlBatchPostMgmt.Run(ItemJnlLine);
+
+        ItemJnlLine2.MarkedOnly(true);
+        ItemJnlBatchPostMgmt.Run(ItemJnlLine2);
+
+        DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine);
+        DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(ItemJnlLine2);
+    end;
+
+
     #endregion SOR INSPECTION PACKING LIST
+
+    #region SOR UNPACK PACKAGE
+    // 
+    #endregion SOR UNPACK PACKAGE
 
     #region HELPER
     /// <summary>Converts a value from the "PMP15 Sortation Step Enum" to the corresponding "PMP15 Bin Step-Type" enum.</summary>
@@ -3457,7 +4935,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     /// <summary>Retrieves SOR bin codes based on predefined bin types and relationships.</summary>
     /// <remarks>Finds bins for SOR steps 0–4 and identifies the previous bin linked to step 0.</remarks>
     /// <param name="SORBinCode">An array used to store the retrieved SOR bin codes.</param>
-    local procedure GetSORBinCodes(var SORBinCode: array[6] of Code[20])
+    local procedure GetSORBinCodes(var SORBinCode: array[7] of Code[20])
     var
         Bins: Record Bin;
     begin
@@ -3465,6 +4943,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         Bins.SetRange("PMP15 Bin Type", Bins."PMP15 Bin Type"::"0");
         if Bins.FindFirst() then begin
             SORBinCode[1] := Bins.Code;
+            SORBinCode[6] := Bins."PMP15 Previous Bin";
         end;
         Bins.SetRange("PMP15 Bin Type", Bins."PMP15 Bin Type"::"1");
         if Bins.FindFirst() then begin
@@ -3482,10 +4961,14 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         if Bins.FindFirst() then begin
             SORBinCode[5] := Bins.Code;
         end;
-        Bins.SetRange("PMP15 Previous Bin", SORBinCode[1]);
+        Bins.SetRange("PMP15 Bin Type", Bins."PMP15 Bin Type"::Filler);
         if Bins.FindFirst() then begin
-            SORBinCode[6] := Bins.Code;
+            SORBinCode[7] := Bins.Code;
         end;
+        // Bins.SetRange("PMP15 Previous Bin", SORBinCode[1]);
+        // if Bins.FindFirst() then begin
+        //     SORBinCode[6] := Bins.Code;
+        // end;
     end;
 
     /// <summary>Splits a Sortation Step master code into its step and code parts.</summary>
@@ -3507,7 +4990,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         end;
     end;
 
-    // Retrieves and loads the location record corresponding to the provided location code, or clears it if the code is blank.
+    ///<summary>Retrieves and loads the location record corresponding to the provided location code, or clears it if the code is blank.</summary>
     local procedure GetLocation(LocationCode: Code[10])
     begin
         if LocationCode = '' then
@@ -3590,8 +5073,8 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         end;
     end;
 
-    // LA TEMPORAIRE (NEEDS TO READ FDD)
-    // <summary>Retrieves the sub-merk group values from the specified Sortation Production Order Detail Line record.</summary>
+
+    /// <summary>Retrieves the sub-merk group values from the specified Sortation Production Order Detail Line record.</summary>
     /// <remarks>This procedure extracts the group codes for each sub-merk level based on the provided Sortation Detail Quality record and assigns them to the corresponding array elements.</remarks>
     /// <param name="SubmerkGroup">An array that will store the resulting sub-merk group codes.</param>
     /// <param name="SORProdOrdDetLine">The Sortation Detail Quality record containing the sub-merk and tobacco type data used for group lookup.</param>
@@ -3669,7 +5152,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             SubMerkList.Add(SubmerkConversion);
     end;
 
-    // Determines the minimum and maximum integer values converted from a list of sub-merk codes.
+    ///<summary>Determines the minimum and maximum integer values converted from a list of sub-merk codes.</summary>
     local procedure GetMinMaxSubMerkFromList(SubmerkCodes: array[5] of Code[50]; var MinValue: Integer; var MaxValue: Integer)
     var
         i: Integer;
@@ -3737,7 +5220,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         exit(IsBigger);
     end;
 
-    // Assigns multiple sub-merk code values into the provided array in sequential order.
+    ///<summary>Assigns multiple sub-merk code values into the provided array in sequential order.</summary>
     local procedure SetSubmerkCodes(var SubmerkCodes: array[5] of Code[50]; Submerk1: Code[50]; Submerk2: Code[50]; Submerk3: Code[50]; Submerk4: Code[50]; Submerk5: Code[50])
     begin
         SubmerkCodes[1] := Submerk1;
@@ -3747,20 +5230,21 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         SubmerkCodes[5] := Submerk5;
     end;
 
-    // Retrieves sub-merk codes corresponding to the record with the highest quantity for a given item, variant, and package number.
+    ///<summary>Retrieves sub-merk codes corresponding to the record with the highest quantity for a given item, variant, and package number.</summary>
     local procedure GetSubmerkforBiggestRank(var SubmerkCodes: array[5] of Code[50]; ItemNo: Code[20]; VarCode: Code[50]; PkgNo: Code[50])
     var
         SDRQuery: Query "PMP15 SOR-Detail Result Pkg-No";
         MaxQty: Decimal;
     begin
+        // MaxQty := 2000000000;
         MaxQty := 0;
         SDRQuery.SetRange(SDRQuery.SDR_ItemNo, ItemNo);
         SDRQuery.SetFilter(SDRQuery.SDR_VariantCode, VarCode);
         SDRQuery.SetFilter(SDRQuery.SDR_PackageNo, PkgNo);
         SDRQuery.Open();
         while SDRQuery.Read() do begin
-            if (SDRQuery.SDR_Quantity > MaxQty) AND ((SDRQuery.SDR_SubMerk2 <> '') OR (SDRQuery.SDR_SubMerk3 <> '')) then begin
-                MaxQty := SDRQuery.SDR_Quantity;
+            if (SDRQuery.SM3_Ranking > MaxQty) AND ((SDRQuery.SDR_SubMerk2 <> '') OR (SDRQuery.SDR_SubMerk3 <> '')) then begin
+                MaxQty := SDRQuery.SM3_Ranking;
                 SubmerkCodes[1] := SDRQuery.SDR_SubMerk1;
                 SubmerkCodes[2] := SDRQuery.SDR_SubMerk2;
                 SubmerkCodes[3] := SDRQuery.SDR_SubMerk3;
@@ -3782,10 +5266,10 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             exit(false);
         end;
 
-        if SORInspectPkg."Sorted Variant Code" = '' then begin
-            Error('Sorted Variant Code must have a value.');
-            exit(false);
-        end;
+        // if SORInspectPkg."Sorted Variant Code" = '' then begin
+        //     Error('Sorted Variant Code must have a value.');
+        //     exit(false);
+        // end;
 
         SORInspectPkgLine.Reset();
         SORInspectPkgLine.SetRange("Document No.", SORInspectPkg."No.");
@@ -3796,8 +5280,6 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
 
         exit(true);
     end;
-
-    /// "ConvertLREnumfromCodes(LRCode: Code[1]): Enum "PMP15 L__R Enum"" --> 
 
     /// <summary>Converts a single-character Left/Right code into its corresponding PMP15 L__R Enum value.</summary>
     /// <param name="LRCode">The code representing Left ('L') or Right ('R').</param>
@@ -3812,6 +5294,259 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             exit(LREnum::R)
         else
             exit(LREnum::" ");
+    end;
+
+    /// <summary>Converts a <b>Sortation Step Enum</b> value to its corresponding <b>integer representation</b> (0-4).</summary>
+    /// <remarks>Provides a simple mapping from the "PMP15 Sortation Step Enum" members ("0", "1", "2", "3", "4") to their integer equivalents.</remarks>
+    /// <param name="StepEnum">The enumeration value to convert.</param>
+    /// <returns>The integer value (0, 1, 2, 3, or 4) corresponding to the provided enum member.</returns>
+    procedure ConvertEnumSortationStep_toInteger(StepEnum: Enum "PMP15 Sortation Step Enum"): Integer
+    begin
+        case StepEnum of
+            StepEnum::"0":
+                exit(0);
+            StepEnum::"1":
+                exit(1);
+            StepEnum::"2":
+                exit(2);
+            StepEnum::"3":
+                exit(3);
+            StepEnum::"4":
+                exit(4);
+        end;
+    end;
+
+    /// <summary>Previews the posting of <b>two sets of Item Journal Lines</b> to validate transaction feasibility before actual posting.</summary>
+    /// <remarks> This procedure performs a <b>dry-run validation</b> of both OUTPUT and CONSUMPTION journal lines by utilizing the Item Journal Posting codeunit in preview mode. It attempts to post the first set of journal lines (Rec), and if successful (or if the only error is the expected preview mode error), it proceeds to validate the second set (Rec2). If either preview fails, all marked lines are deleted from both batches, and the function returns FALSE. If both previews succeed, it returns TRUE, indicating that the actual posting can proceed safely.
+    /// </remarks>
+    /// <param name="Rec">The first set of Item Journal Lines (typically OUTPUT entries) to preview for posting.</param>
+    /// <param name="Rec2">The second set of Item Journal Lines (typically CONSUMPTION entries) to preview for posting.</param>
+    /// <returns>TRUE if both journal batches pass the preview validation; FALSE if either batch fails preview posting.</returns>
+    procedure PreviewPostingItemJournalLine(var Rec: Record "Item Journal Line"; var Rec2: Record "Item Journal Line"): Boolean
+    var
+        TempIJLRec: Record "Item Journal Line" temporary;
+        ItemJnlPost: Codeunit "Item Jnl.-Post";
+        ReservationManagement: Codeunit "Reservation Management";
+        ItemJnlLineReservelocal: Codeunit "Item Jnl. Line-Reserve";
+        Result: Boolean;
+    begin
+        Rec.MarkedOnly(true);
+        // if Rec.FindSet() then
+        // repeat
+        Commit();
+        Clear(Result);
+
+        ItemJnlPost.SetPreviewMode(true);
+        if (ItemJnlPost.Run(Rec)) OR (GetLastErrorText() <> PreviewModeErr) then begin
+            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(Rec);
+            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(Rec2);
+            ItemJnlPost.Preview(Rec);
+            exit(false); // Failed
+        end;
+
+        ItemJnlPost.SetPreviewMode(true);
+        if (ItemJnlPost.Run(Rec2)) OR (GetLastErrorText() <> PreviewModeErr) then begin
+            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(Rec);
+            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(Rec2);
+            ItemJnlPost.Preview(Rec2);
+            exit(false); // Failed
+        end;
+        // until Rec.Next() = 0;
+        exit(true); // SuccessGenerateRecReserveEntryItemJnlLine
+    end;
+
+    /// <summary>Deletes all <b>marked Item Journal Lines</b> and their associated <b>Reservation Entries</b> before committing the transaction.</summary>
+    local procedure DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(var Rec: Record "Item Journal Line")
+    var
+        ReservationManagement: Codeunit "Reservation Management";
+    begin
+        Rec.MarkedOnly(true);
+
+        if Rec.FindSet() then
+            repeat
+                ReservationManagement.SetReservSource(Rec);
+                ReservationManagement.SetItemTrackingHandling(1);
+                // Allow Deletion
+                ReservationManagement.DeleteReservEntries(true, 0);
+                Rec.CalcFields("Reserved Qty. (Base)");
+            until Rec.Next() = 0;
+        Rec.DeleteAll();
+        Commit();
+    end;
+
+    /// <summary>Checks if a specific <b>Package Number</b> already exists in the system for a given Item and Variant combination.</summary>
+    /// <remarks>Searches the Package No. Information table for a matching record based on Item No., Variant Code, and Package No. parameters.</remarks>
+    /// <param name="ItemNoCode">The item number to search for.</param>
+    /// <param name="ItemVariantCode">The item variant code to filter by.</param>
+    /// <param name="PackageNo">The package number to verify existence.</param>
+    /// <returns>TRUE if the package number exists; FALSE if it does not.</returns>
+    procedure PackageNoIsExist(ItemNoCode: Code[20]; ItemVariantCode: Code[10]; PackageNo: Code[50]): Boolean
+    var
+        PackageNoInfoRec: Record "Package No. Information";
+    begin
+        PackageNoInfoRec.Reset();
+        PackageNoInfoRec.SetRange("Item No.", ItemNoCode);
+        PackageNoInfoRec.SetRange("Variant Code", ItemVariantCode);
+        PackageNoInfoRec.SetRange("Package No.", PackageNo);
+        if PackageNoInfoRec.Count > 0 then begin
+            exit(true);
+        end else begin
+            exit(false);
+        end;
+    end;
+
+    /// <summary>Creates a new <b>Package No. Information</b> record from an Item Journal Line and temporary Sortation Production Order data.</summary>
+    /// <remarks>Initializes a new package record with item details, bin information, sub-brand markers (Merk 1-5), L/R designation, crop data, production order reference, lot number, and links it to the unsorted item from the sortation order.</remarks>
+    /// <param name="ItemJnlLineRec">The source Item Journal Line containing package and tracking details.</param>
+    /// <param name="SortProdOrderRec">Temporary Sortation Production Order record providing unsorted item references.</param>
+    procedure CreateNewPackagefromItemJnlLineOutput(ItemJnlLineRec: Record "Item Journal Line"; var SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary)
+    var
+        PackageNoInfoRec: Record "Package No. Information";
+    begin
+        PackageNoInfoRec.Reset();
+        PackageNoInfoRec.Init();
+        PackageNoInfoRec."Item No." := ItemJnlLineRec."Item No.";
+        PackageNoInfoRec."Variant Code" := ItemJnlLineRec."Variant Code";
+        PackageNoInfoRec."Package No." := ItemJnlLineRec."Package No.";
+        PackageNoInfoRec."PMP04 Bin Code" := ItemJnlLineRec."Bin Code";
+        PackageNoInfoRec."PMP04 Sub Merk 1" := ItemJnlLineRec."PMP15 Sub Merk 1";
+        PackageNoInfoRec."PMP04 Sub Merk 2" := ItemJnlLineRec."PMP15 Sub Merk 2";
+        PackageNoInfoRec."PMP04 Sub Merk 3" := ItemJnlLineRec."PMP15 Sub Merk 3";
+        PackageNoInfoRec."PMP04 Sub Merk 4" := ItemJnlLineRec."PMP15 Sub Merk 4";
+        PackageNoInfoRec."PMP04 Sub Merk 5" := ItemJnlLineRec."PMP15 Sub Merk 5";
+        if ItemJnlLineRec."PMP15 L/R" = ItemJnlLineRec."PMP15 L/R"::L then begin
+            PackageNoInfoRec."PMP04 L/R" := 'L';
+        end else if ItemJnlLineRec."PMP15 L/R" = ItemJnlLineRec."PMP15 L/R"::R then begin
+            PackageNoInfoRec."PMP04 L/R" := 'R';
+        end;
+        PackageNoInfoRec."PMP04 Crop" := ItemJnlLineRec."PMP15 Crop";
+        PackageNoInfoRec."PMP07 Prod. Order No." := ItemJnlLineRec."PMP15 Prod. Order No.";
+        PackageNoInfoRec."PMP04 Lot No." := ItemJnlLineRec."Lot No.";
+
+        PackageNoInfoRec."PMP15 Unsorted Item No." := SortProdOrderRec."Unsorted Item No.";
+        PackageNoInfoRec."PMP15 Unsorted Variant Code" := SortProdOrderRec."Unsorted Variant Code";
+        PackageNoInfoRec.Insert();
+    end;
+
+    /// <summary>Converts a <b>string code</b> to a <b>Sortation Step Enum</b> value after extracting a single digit.</summary>
+    /// <remarks>Extracts the first digit from the input code using GetSingleDigitFromCode() and maps it to the corresponding enum member ("0"-"4"), or returns a blank enum value for invalid digits.</remarks>
+    /// <param name="SORStepCode">The input code containing the step digit (e.g., "1", "2A", "3-B").</param>
+    /// <returns>The corresponding Sortation Step Enum value, or blank for invalid/unsupported digits.</returns>
+    procedure ConvertCode_toSortationStepEnum(SORStepCode: Code[50]) SORStep: Enum "PMP15 Sortation Step Enum"
+    begin
+        SORStepCode := GetSingleDigitFromCode(SORStepCode);
+
+        case SORStepCode of
+            '0':
+                SORStep := SORStep::"0";
+            '1':
+                SORStep := SORStep::"1";
+            '2':
+                SORStep := SORStep::"2";
+            '3':
+                SORStep := SORStep::"3";
+            '4':
+                SORStep := SORStep::"4";
+            else
+                SORStep := SORStep::" ";
+        end;
+
+        exit(SORStep);
+    end;
+
+    /// <summary>Extracts the <b>first numeric digit</b> (0-9) from a given input code string.</summary>
+    /// <remarks> Iterates through each character of the input code from left to right and returns the first character that is a numeric digit (0 through 9). If no numeric digit is found in the entire string, the function returns an empty string. This is useful for parsing codes that may contain alphanumeric combinations and extracting the primary numeric identifier.
+    /// </remarks>
+    /// <param name="InputCode">The alphanumeric code string to search for numeric digits.</param>
+    /// <returns>The first numeric digit found as a single character string, or an empty string if no digits are present.</returns>
+    procedure GetSingleDigitFromCode(InputCode: Code[50]): Code[1]
+    var
+        i: Integer;
+    begin
+        for i := 1 to StrLen(InputCode) do
+            if InputCode[i] in ['0' .. '9'] then
+                exit(InputCode[i]);
+
+        exit(''); // tidak ada angka sama sekali
+    end;
+
+    /// <summary>Checks if an <b>unblocked Lot No. Information</b> record exists for the specified Item/Variant/Lot combination and returns it if found.</summary>
+    local procedure LotNoInformationIsExist(var LotNoInfo: Record "Lot No. Information"; ItemNo: Code[20]; VariantCode: Code[10]; LotNoCode: Code[50]): Boolean
+    var
+        LotNoInfoRec: Record "Lot No. Information";
+    begin
+        LotNoInfoRec.Reset();
+        LotNoInfoRec.SetRange("Item No.", ItemNo);
+        LotNoInfoRec.SetRange("Variant Code", VariantCode);
+        LotNoInfoRec.SetRange("Lot No.", LotNoCode);
+        LotNoInfoRec.SetRange(Blocked, false);
+        if LotNoInfoRec.FindFirst() then begin
+            LotNoInfo := LotNoInfoRec;
+            exit(true);
+        end else begin
+            exit(false);
+        end;
+    end;
+
+    /// <summary>Creates a <b>new Lot No. Information</b> record by copying data from an existing record with updated Item, Variant, and Lot No. values.</summary>
+    local procedure CreateNewLotNoInformationfromOldLotNoInfo(var OldLotNoInfo: Record "Lot No. Information"; NewItemNo: Code[20]; NewVariantCode: Code[10]; NewLotNoCode: Code[50]): Record "Lot No. Information"
+    var
+        NewLotNoInfo: Record "Lot No. Information";
+    begin
+        NewLotNoInfo.Reset();
+
+        NewLotNoInfo.Init();
+        NewLotNoInfo := OldLotNoInfo;
+        NewLotNoInfo."Item No." := NewItemNo;
+        NewLotNoInfo."Variant Code" := NewVariantCode;
+        NewLotNoInfo."Lot No." := NewLotNoCode;
+        NewLotNoInfo.Insert();
+        exit(NewLotNoInfo);
+    end;
+
+    /// <summary>Validates whether a <b>Bin Content record with positive quantity</b> exists for a specific Item, Variant, and Location combination.</summary>
+    /// <remarks> Searches the Bin Content table for records matching the provided Item No., Variant Code, and Location Code, automatically calculating the base quantity field. It applies a filter to only consider bins where the "Quantity (Base)" is greater than zero. If a matching record is found, it populates the output BinContent parameter with the record data and returns TRUE; otherwise, it returns FALSE.
+    /// </remarks>
+    /// <param name="BinContent">Output parameter that will contain the found Bin Content record if one exists.</param>
+    /// <param name="ItemNo">The item number to search for in bin contents.</param>
+    /// <param name="VariantCode">The item variant code to filter by.</param>
+    /// <param name="LocationCode">The warehouse location code to search within.</param>
+    /// <returns>TRUE if a bin content record with positive quantity exists; FALSE otherwise.</returns>
+    procedure ValidateBinContentIsExistforItemJnlLine(var BinContent: Record "Bin Content"; ItemNo: Code[20]; VariantCode: Code[10]; LocationCode: Code[10]): Boolean
+    var
+        BinContentRec: Record "Bin Content";
+    begin
+        BinContentRec.Reset();
+        BinContentRec.SetRange("Location Code", LocationCode);
+        BinContentRec.SetRange("Item No.", ItemNo);
+        BinContentRec.SetRange("Variant Code", VariantCode);
+        BinContentRec.SetAutoCalcFields("Quantity (Base)");
+        BinContentRec.SetFilter("Quantity (Base)", '>0');
+        if BinContentRec.FindFirst() then begin
+            BinContent := BinContentRec;
+            exit(true);
+        end else begin
+            exit(false);
+        end;
+    end;
+
+    /// <summary>Retrieves the <b>Sub Merk 1 value</b> from the Item Variant record for a given Item and Variant combination.</summary>
+    /// <remarks> Looks up the Item Variant table using the provided Item No. and Variant Code, and returns the value stored in the "PMP15 Sub Merk 1" field if the variant exists. If no matching item variant is found, the function returns an empty string.
+    /// </remarks>
+    /// <param name="ItemNo">The item number to search for.</param>
+    /// <param name="VariantCode">The variant code of the item.</param>
+    /// <returns>The Sub Merk 1 value as text, or an empty string if the item variant is not found.</returns>
+    procedure GetSubmerk1fromItemNVariant(ItemNo: Code[20]; VariantCode: Code[10]): Code[50]
+    var
+        ItemVariantRec: Record "Item Variant";
+    begin
+        ItemVariantRec.Reset();
+        ItemVariantRec.SetRange("Item No.", ItemNo);
+        ItemVariantRec.SetRange(Code, VariantCode);
+        if ItemVariantRec.FindFirst() then begin
+            exit(ItemVariantRec."PMP15 Sub Merk 1");
+        end else
+            exit('');
     end;
 
     #region ERROR HELPER
@@ -3863,6 +5598,29 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             ErrInfo.FieldNo(Item.FieldNo("No."));
             ErrInfo.RecordId(Item.RecordId());
             ErrInfo.AddNavigationAction('Show Item Card');
+            Error(ErrInfo);
+            Clear(ErrInfo);
+        end;
+    end;
+
+    /// <summary>Validates the existence of a specific <b>Production Item Type ("Sortation-Inspection")</b> in the system and raises a navigable error if not found.</summary>
+    /// <remarks> This procedure performs a critical system validation check by searching the Production Item Type table for an entry where the "Production Item Type" field equals the "Sortation-Inspection" enum value. If no such record exists, it constructs a comprehensive error message using the ErrorInfo data type, which includes a user-friendly title, detailed message, and a navigation action that allows users to directly open the Production Item Types page to address the missing configuration. This validation ensures that necessary master data is present before proceeding with sortation inspection transactions.
+    /// </remarks>
+    procedure CheckProductionItemTypeforSortationInspectionisExist()
+    var
+        ProdItemTypeRec: Record "PMP07 Production Item Type";
+        ErrInfo: ErrorInfo;
+    begin
+        ProdItemTypeRec.Reset();
+        ProdItemTypeRec.SetRange("Production Item Type", Enum::"PMP09 Production Item Type"::"Sortation-Inspection");
+        if not ProdItemTypeRec.FindFirst() then begin
+            ErrInfo.DataClassification(DataClassification::SystemMetadata);
+            ErrInfo.ErrorType(ErrorType::Client);
+            ErrInfo.Verbosity(Verbosity::Error);
+            ErrInfo.Title := 'PROD. ITEM TYPES - Data not found';
+            ErrInfo.Message := StrSubstNo('The Production Item Type of "%1" is not found or have not been specified yet. Please define the Production Item Type before proceeding with the transaction.', Enum::"PMP09 Production Item Type"::"Sortation-Inspection");
+            ErrInfo.PageNo(Page::"PMP07 Production Item Types");
+            ErrInfo.AddNavigationAction('Open Prod. Item Types');
             Error(ErrInfo);
             Clear(ErrInfo);
         end;

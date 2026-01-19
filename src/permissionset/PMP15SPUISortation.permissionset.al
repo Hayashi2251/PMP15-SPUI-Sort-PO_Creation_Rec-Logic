@@ -24,5 +24,7 @@ permissionset 60401 PMP15SPUISortation
         page "PMP15 SOR Unpack New-Det. Res"=X,
         page "PMP15 SOR Unpack Pkg. Card"=X,
         query "PMP15 Curr & Prev Bin Query"=X,
-        query "PMP15 ProdBOMLineItemTypeQuery"=X;
+        query "PMP15 ProdBOMLineItemTypeQuery"=X,
+        page "PMP15 SOR Unpack Package List"=X,
+        query "PMP15Prod-Comp. ItemType Query"=X;
 }

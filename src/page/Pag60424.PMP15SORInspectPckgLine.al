@@ -21,6 +21,7 @@ page 60424 "PMP15 SOR Inspect. Pckg. Line"
     LinksAllowed = false;
     MultipleNewLines = true;
     DeleteAllowed = false;
+    InsertAllowed = false;
 
     #region LAYOUTS
     layout
@@ -40,7 +41,22 @@ page 60424 "PMP15 SOR Inspect. Pckg. Line"
                 {
                     ApplicationArea = All;
                     Caption = 'Select';
+                    Editable = IsDocumentReleased;
                     ToolTip = 'Specifies the value of the Select field.', Comment = '%';
+                }
+                field("Sorted Item No."; Rec."Sorted Item No.")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Sorted Item No.';
+                    Editable = IsDocumentReleased;
+                    ToolTip = 'Specifies the value of the Sorted Item No. field.', Comment = '%';
+                }
+                field("Sorted Variant Code"; Rec."Sorted Variant Code")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Sorted Variant Code';
+                    Editable = IsDocumentReleased;
+                    ToolTip = 'Specifies the value of the Sorted Variant Code field.', Comment = '%';
                 }
                 field("Sub Merk 1"; Rec."Sub Merk 1")
                 {
@@ -81,6 +97,7 @@ page 60424 "PMP15 SOR Inspect. Pckg. Line"
                 {
                     ApplicationArea = All;
                     Caption = 'L/R';
+                    Editable = LR_Visibility;
                     ToolTip = 'Specifies the value of the L/R field.', Comment = '%';
                 }
                 field("Lot No."; Rec."Lot No.")
@@ -116,12 +133,18 @@ page 60424 "PMP15 SOR Inspect. Pckg. Line"
                     ApplicationArea = All;
                     Caption = 'Result';
                     ToolTip = 'Specifies the value of the Result field.', Comment = '%';
+                    Editable = Result_Visibility;
+                    trigger OnValidate()
+                    begin
+                        CurrPage.Update();
+                    end;
                 }
                 field("New Item Code"; Rec."New Item Code")
                 {
                     ApplicationArea = All;
                     Caption = 'New Item Code';
-                    Editable = Rec.Result = Rec.Result::"Item Change";
+                    // Editable = Rec.Result = Rec.Result::"Item Change";
+                    Editable = NewItemCode_Visibility;
                     ToolTip = 'Specifies the value of the New Item Code field.', Comment = '%';
                     trigger OnLookup(var Text: Text): Boolean
                     var
@@ -163,60 +186,63 @@ page 60424 "PMP15 SOR Inspect. Pckg. Line"
                 {
                     ApplicationArea = All;
                     Caption = 'Standard';
+                    Editable = Standard_Visibility;
                     ToolTip = 'Specifies the value of the Standard field.', Comment = '%';
                 }
                 field("New Sub Merk 1"; Rec."New Sub Merk 1")
                 {
                     ApplicationArea = All;
                     Caption = 'New Sub Merk 1';
-                    Editable = Rec.Result = Rec.Result::"Item Change";
+                    Editable = NewSubMerk1_Visibility;
                     ToolTip = 'Specifies the value of the New Sub Merk 1 field.', Comment = '%';
                 }
                 field("New Sub Merk 2"; Rec."New Sub Merk 2")
                 {
                     ApplicationArea = All;
                     Caption = 'New Sub Merk 2';
-                    Editable = Rec.Result = Rec.Result::"Item Change";
+                    Editable = NewSubMerk2_Visibility;
                     ToolTip = 'Specifies the value of the New Sub Merk 2 field.', Comment = '%';
                 }
                 field("New Sub Merk 3"; Rec."New Sub Merk 3")
                 {
                     ApplicationArea = All;
                     Caption = 'New Sub Merk 3';
-                    Editable = Rec.Result = Rec.Result::"Item Change";
+                    Editable = NewSubMerk3_Visibility;
                     ToolTip = 'Specifies the value of the New Sub Merk 3 field.', Comment = '%';
                 }
                 field("New Sub Merk 4"; Rec."New Sub Merk 4")
                 {
                     ApplicationArea = All;
                     Caption = 'New Sub Merk 4';
-                    Editable = Rec.Result = Rec.Result::"Item Change";
+                    Editable = NewSubMerk4_Visibility;
                     ToolTip = 'Specifies the value of the New Sub Merk 4 field.', Comment = '%';
                 }
                 field("New Sub Merk 5"; Rec."New Sub Merk 5")
                 {
                     ApplicationArea = All;
                     Caption = 'New Sub Merk 5';
-                    Editable = Rec.Result = Rec.Result::"Item Change";
+                    Editable = NewSubMerk5_Visibility;
                     ToolTip = 'Specifies the value of the New Sub Merk 5 field.', Comment = '%';
                 }
                 field("New L/R"; Rec."New L/R")
                 {
                     ApplicationArea = All;
                     Caption = 'L/R';
+                    Editable = NewLR_Visibility;
                     ToolTip = 'Specifies the value of the New L/R field.', Comment = '%';
                 }
                 field("From Bin Code"; Rec."From Bin Code")
                 {
                     ApplicationArea = All;
                     Caption = 'From Bin Code';
-                    Editable = false;
+                    Editable = FromBinCode_Visibility;
                     ToolTip = 'Specifies the value of the From Bin Code field.', Comment = '%';
                 }
                 field("To Bin Code"; Rec."To Bin Code")
                 {
                     ApplicationArea = All;
                     Caption = 'To Bin Code';
+                    Editable = ToBinCode_Visibility;
                     ToolTip = 'Specifies the value of the To Bin Code field.', Comment = '%';
                 }
                 field("Prod. Order No."; Rec."Prod. Order No.")
@@ -233,18 +259,22 @@ page 60424 "PMP15 SOR Inspect. Pckg. Line"
                     Editable = false;
                     ToolTip = 'Specifies the value of the Prod. Order Line No. field.', Comment = '%';
                 }
-                // field(Process; Rec.Process)
-                // {
-                //     ApplicationArea = All;
-                //     Caption = 'Prod. Order Line No.';
-                //     ToolTip = 'Specifies the value of the Process field.', Comment = '%';
-                // }
-                // field("Location Code"; Rec."Location Code")
-                // {
-                //     ApplicationArea = All;
-                //     Caption = 'Process';
-                //     ToolTip = 'Specifies the value of the Location Code field.', Comment = '%';
-                // }
+                field(Process; Rec.Process)
+                {
+                    ApplicationArea = All;
+                    Caption = 'Process';
+                    ToolTip = 'Specifies the value of the Process field.', Comment = '%';
+                    Editable = false;
+                    Visible = false;
+                }
+                field("Location Code"; Rec."Location Code")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Location Code';
+                    ToolTip = 'Specifies the value of the Location Code field.', Comment = '%';
+                    Editable = false;
+                    Visible = false;
+                }
             }
         }
     }
@@ -301,18 +331,14 @@ page 60424 "PMP15 SOR Inspect. Pckg. Line"
     }
     #endregion ACTIONS
 
-    var
-        ExtComSetup: Record "PMP07 Extended Company Setup";
-        SORInspectPkgHeadr: Record "PMP15 SOR Inspection Pkg Headr";
-        IsDocumentReleased: Boolean;
-
-    protected var
-        PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
-        SortationMgmt: Codeunit "PMP15 Sortation PO Mgmt";
-
     trigger OnInit()
     begin
         ExtComSetup.Get();
+    end;
+
+    trigger OnNewRecord(BelowxRec: Boolean)
+    begin
+        Rec."Location Code" := ExtComSetup."PMP15 SOR Location Code";
     end;
 
     trigger OnAfterGetCurrRecord()
@@ -325,10 +351,64 @@ page 60424 "PMP15 SOR Inspect. Pckg. Line"
                 IsDocumentReleased := false;
             end;
         end;
+
+        NewSubMerk1_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (not Rec.Process);
+        NewSubMerk2_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (not Rec.Process);
+        NewSubMerk3_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (not Rec.Process);
+        NewSubMerk4_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (not Rec.Process);
+        NewSubMerk5_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (not Rec.Process);
+        NewItemCode_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (Rec.Result <> Rec.Result::Rework) AND (not Rec.Process);
+        Standard_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (not Rec.Process);
+        Result_Visibility := not Rec.Process;
+        FromBinCode_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (not Rec.Process);
+        ToBinCode_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (not Rec.Process);
+        NewLR_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (not Rec.Process);
+        LR_Visibility := (Rec.Result <> Rec.Result::Accepted) AND (not Rec.Process);
     end;
 
-    trigger OnNewRecord(BelowxRec: Boolean)
+    trigger OnDeleteRecord(): Boolean
     begin
-        Rec."Location Code" := ExtComSetup."PMP15 SOR Location Code";
+
+    end;
+
+
+    var
+        ExtComSetup: Record "PMP07 Extended Company Setup";
+        SORInspectPkgHeadr: Record "PMP15 SOR Inspection Pkg Headr";
+        IsDocumentReleased: Boolean;
+
+    protected var
+        PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
+        SortationMgmt: Codeunit "PMP15 Sortation PO Mgmt";
+        LineNo_Visibility, Select_Visibility, SubMerk1_Visibility, SubMerk2_Visibility, SubMerk3_Visibility, SubMerk4_Visibility, SubMerk5_Visibility, LR_Visibility, LotNo_Visibility, PackageNo_Visibility, Quantity_Visibility, UnitofMeasureCode_Visibility, Result_Visibility, NewItemCode_Visibility, Standard_Visibility, NewSubMerk1_Visibility, NewSubMerk2_Visibility, NewSubMerk3_Visibility, NewSubMerk4_Visibility, NewSubMerk5_Visibility, NewLR_Visibility, FromBinCode_Visibility, ToBinCode_Visibility, ProdOrderNo_Visibility, ProdOrderLineNo_Visibility : Boolean;
+
+    /// <summary>Resets all <b>UI control visibility flags</b> to their default hidden state on the page.</summary>
+    local procedure ClearVisibilitySetting()
+    begin
+        Clear(LineNo_Visibility);
+        Clear(Select_Visibility);
+        Clear(SubMerk1_Visibility);
+        Clear(SubMerk2_Visibility);
+        Clear(SubMerk3_Visibility);
+        Clear(SubMerk4_Visibility);
+        Clear(SubMerk5_Visibility);
+        Clear(LR_Visibility);
+        Clear(LotNo_Visibility);
+        Clear(PackageNo_Visibility);
+        Clear(Quantity_Visibility);
+        Clear(UnitofMeasureCode_Visibility);
+        Clear(Result_Visibility);
+        Clear(NewItemCode_Visibility);
+        Clear(Standard_Visibility);
+        Clear(NewSubMerk1_Visibility);
+        Clear(NewSubMerk2_Visibility);
+        Clear(NewSubMerk3_Visibility);
+        Clear(NewSubMerk4_Visibility);
+        Clear(NewSubMerk5_Visibility);
+        Clear(NewLR_Visibility);
+        Clear(FromBinCode_Visibility);
+        Clear(ToBinCode_Visibility);
+        Clear(ProdOrderNo_Visibility);
+        Clear(ProdOrderLineNo_Visibility);
     end;
 }

@@ -37,6 +37,11 @@ page 60408 "PMP15 Sub Merk 4"
                 {
                     ToolTip = 'Specifies the value of the Item Owner Internal field.', Comment = '%';
                 }
+                field(Group; Rec.Group)
+                {
+                    ApplicationArea = All;
+                    ToolTip = 'Specifies the value of the Item Owner Internal field.', Comment = '%';
+                }
             }
         }
     }

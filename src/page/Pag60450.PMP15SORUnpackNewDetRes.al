@@ -1,7 +1,19 @@
 page 60450 "PMP15 SOR Unpack New-Det. Res"
 {
+    // VERSION PMP15 
+
+    // VERSION
+    // Version List       Name
+    // ============================================================================================================
+    // PMP15              ID Localization
+    // 
+    // PAGE
+    // Date        Developer  Version List  Trigger                     Description
+    // ============================================================================================================
+    // 2026/01/10  SW         PMP15                                     Create Page
+    // 
     ApplicationArea = All;
-    Caption = 'PMP15 SOR Unpack New-Det. Res';
+    Caption = 'New Sortation Detail Result';
     PageType = ListPart;
     SourceTable = "PMP15 SOR Unpack New-Det. Res";
 
@@ -57,8 +69,8 @@ page 60450 "PMP15 SOR Unpack New-Det. Res"
                 field("Package No."; Rec."Package No.")
                 {
                     ApplicationArea = All;
-                    Caption = 'Package No.';
-                    ToolTip = 'Specifies the value of the Package No. field.', Comment = '%';
+                    Caption = 'Current Package No.';
+                    ToolTip = 'Specifies the value of the Current Package No. field.', Comment = '%';
                     Editable = false;
                 }
                 field("New Package No."; Rec."New Package No.")
@@ -70,32 +82,32 @@ page 60450 "PMP15 SOR Unpack New-Det. Res"
                 field("Sub Merk 1"; Rec."Sub Merk 1")
                 {
                     ApplicationArea = All;
-                    Caption = 'Sub Merk 1';
+                    Caption = 'New Sub Merk 1';
                     ToolTip = 'Specifies the value of the Sub Merk 1 field.', Comment = '%';
                     Editable = false;
                 }
                 field("Sub Merk 2"; Rec."Sub Merk 2")
                 {
                     ApplicationArea = All;
-                    Caption = 'Sub Merk 2';
+                    Caption = 'New Sub Merk 2';
                     ToolTip = 'Specifies the value of the Sub Merk 2 field.', Comment = '%';
                 }
                 field("Sub Merk 3"; Rec."Sub Merk 3")
                 {
                     ApplicationArea = All;
-                    Caption = 'Sub Merk 3';
+                    Caption = 'New Sub Merk 3';
                     ToolTip = 'Specifies the value of the Sub Merk 3 field.', Comment = '%';
                 }
                 field("Sub Merk 4"; Rec."Sub Merk 4")
                 {
                     ApplicationArea = All;
-                    Caption = 'Sub Merk 4';
+                    Caption = 'New Sub Merk 4';
                     ToolTip = 'Specifies the value of the Sub Merk 4 field.', Comment = '%';
                 }
                 field("Sub Merk 5"; Rec."Sub Merk 5")
                 {
                     ApplicationArea = All;
-                    Caption = 'Sub Merk 5';
+                    Caption = 'New Sub Merk 5';
                     ToolTip = 'Specifies the value of the Sub Merk 5 field.', Comment = '%';
                 }
                 field("L/R"; Rec."L/R")

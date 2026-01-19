@@ -1,30 +1,19 @@
-page 60448 "PMP15 SOR Unpack Pkg. Card"
+page 60451 "PMP15 SOR Unpack Package List"
 {
-    // VERSION PMP15 
-
-    // VERSION
-    // Version List       Name
-    // ============================================================================================================
-    // PMP15              PMP SPUI - Sort-PO Creation & Recording (Logic)
-    // 
-    // PAGE
-    // Date        Developer  Version List  Trigger                     Description
-    // ============================================================================================================
-    // 2026/01/06  SW         PMP15         -                           Create Page
-    // 
     ApplicationArea = All;
-    Caption = 'Sortation Unpack Package';
-    PageType = Card;
+    Caption = 'Sortation Unpack Package List';
+    PageType = List;
+    Editable = false;
+    CardPageId = "PMP15 SOR Unpack Pkg. Card";
     SourceTable = "PMP15 Sortation Unpack Package";
+    UsageCategory = Lists;
 
     layout
     {
         area(Content)
         {
-            group(General)
+            repeater(General)
             {
-                Caption = 'General';
-
                 field("No."; Rec."No.")
                 {
                     ApplicationArea = All;
@@ -66,130 +55,77 @@ page 60448 "PMP15 SOR Unpack Pkg. Card"
                     ApplicationArea = All;
                     Caption = 'Location Code';
                     ToolTip = 'Specifies the value of the Location Code field.', Comment = '%';
-                    Editable = false;
                 }
                 field("Bin Code"; Rec."Bin Code")
                 {
                     ApplicationArea = All;
                     Caption = 'Bin Code';
                     ToolTip = 'Specifies the value of the Bin Code field.', Comment = '%';
-                    Editable = false;
                 }
                 field("Total Current Quantity"; Rec."Total Current Quantity")
                 {
                     ApplicationArea = All;
                     Caption = 'Total Current Quantity';
                     ToolTip = 'Specifies the value of the Total Current Quantity field.', Comment = '%';
-                    Editable = false;
                 }
                 field("Total New Quantity"; Rec."Total New Quantity")
                 {
                     ApplicationArea = All;
                     Caption = 'Total New Quantity';
                     ToolTip = 'Specifies the value of the Total New Quantity field.', Comment = '%';
-                    Editable = false;
                 }
                 field("Sum New Quantity"; Rec."Sum New Quantity")
                 {
                     ApplicationArea = All;
                     Caption = 'Sum New Quantity';
                     ToolTip = 'Specifies the value of the Sum New Quantity field.', Comment = '%';
-                    Editable = false;
                     Visible = false;
                 }
 
-                #region BUSINESS CENTRAL (TIMESTAMP) SYSTEM FIELD
+
+                #region SYSTEM FIELD
                 field(SystemCreatedAt; Rec.SystemCreatedAt)
                 {
                     ApplicationArea = All;
-                    Caption = '';
+                    Caption = 'SystemCreatedAt';
                     ToolTip = 'Specifies the value of the SystemCreatedAt field.', Comment = '%';
-                    Editable = false;
                     Visible = false;
+                    Editable = false;
                 }
                 field(SystemCreatedBy; Rec.SystemCreatedBy)
                 {
                     ApplicationArea = All;
-                    Caption = '';
+                    Caption = 'SystemCreatedBy';
                     ToolTip = 'Specifies the value of the SystemCreatedBy field.', Comment = '%';
-                    Editable = false;
                     Visible = false;
+                    Editable = false;
                 }
                 field(SystemId; Rec.SystemId)
                 {
                     ApplicationArea = All;
-                    Caption = '';
+                    Caption = 'SystemId';
                     ToolTip = 'Specifies the value of the SystemId field.', Comment = '%';
-                    Editable = false;
                     Visible = false;
+                    Editable = false;
                 }
                 field(SystemModifiedAt; Rec.SystemModifiedAt)
                 {
                     ApplicationArea = All;
-                    Caption = '';
+                    Caption = 'SystemModifiedAt';
                     ToolTip = 'Specifies the value of the SystemModifiedAt field.', Comment = '%';
-                    Editable = false;
                     Visible = false;
+                    Editable = false;
                 }
                 field(SystemModifiedBy; Rec.SystemModifiedBy)
                 {
                     ApplicationArea = All;
-                    Caption = '';
+                    Caption = 'SystemModifiedBy';
                     ToolTip = 'Specifies the value of the SystemModifiedBy field.', Comment = '%';
-                    Editable = false;
                     Visible = false;
+                    Editable = false;
                 }
-                #endregion BUSINESS CENTRAL (TIMESTAMP) SYSTEM FIELD
-            }
-            // Current Sortation Detail Result
-            part(CurrDetResSORLine; "PMP15 SOR Unpack Curr-Det. Res")
-            {
-                ApplicationArea = All;
-                SubPageLink = "Document No." = field("No.");
-                UpdatePropagation = Both;
-            }
-            // New Sortation Detail Result
-            part(NewDetResSORLine; "PMP15 SOR Unpack New-Det. Res")
-            {
-                ApplicationArea = All;
-                SubPageLink = "Document No." = field("No.");
-                UpdatePropagation = Both;
+                #endregion SYSTEM FIELD
             }
         }
-    }
-
-    actions
-    {
-        area(Processing)
-        {
-            action(Generate)
-            {
-                ApplicationArea = All;
-                Caption = 'Generate';
-                Image = CreateDocument;
-                trigger OnAction()
-                begin
-                    // 
-                end;
-            }
-            action(Post)
-            {
-                ApplicationArea = All;
-                Caption = 'Post';
-                Image = Post;
-                trigger OnAction()
-                begin
-                    // 
-                end;
-            }
-        }
-
-        #region PROMOTED ACTIONS
-        area(Promoted)
-        {
-            actionref(Generate_Promoted; Generate) { }
-            actionref(Post_Promoted; Post) { }
-        }
-        #endregion PROMOTED ACTIONS
     }
 }

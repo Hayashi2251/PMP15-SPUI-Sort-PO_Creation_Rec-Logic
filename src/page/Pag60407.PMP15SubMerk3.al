@@ -34,6 +34,14 @@ page 60407 "PMP15 Sub Merk 3"
                 {
                     ApplicationArea = All;
                     ToolTip = 'Specifies the value of the Code field.', Comment = '%';
+                    trigger OnValidate()
+                    var
+                        SubMerkRec2: Record "PMP15 Sub Merk";
+                        SubMerkRec3: Record "PMP15 Sub Merk";
+                    begin
+                        // PERFORM UNIQUE VALIDATION HERE
+                        CheckDuplicateSubMerk3(Rec, xRec);
+                    end;
                 }
                 field("Sub Merk 2 Code"; Rec."Sub Merk 2 Code")
                 {
@@ -87,12 +95,19 @@ page 60407 "PMP15 Sub Merk 3"
         }
     }
 
+    /// <summary>Validates and prevents <b>duplicate Sub Merk 3</b> entries by checking for existing records with matching Tobacco Type, Code, and Sub Merk 2 Code.</summary>
+    /// <remarks>
+    /// This procedure performs a duplicate check specifically for Sub Merk 3 records within the Sub Merk table. It searches for any existing record that matches the combination of Type (fixed as "Sub Merk 3"), Tobacco Type, Code, and Sub Merk 2 Code from the provided record. If a duplicate is found, it restores the original Sub Merk 2 Code value and raises an error message that identifies the conflicting Tobacco Type, Sub Merk 2 Code, and Code values to help users resolve the duplication.
+    /// </remarks>
+    /// <param name="SMRec">The new or modified Sub Merk record to check for duplicates (passed by reference).</param>
+    /// <param name="xSMRec">The original Sub Merk record containing previous field values before modification.</param>
     procedure CheckDuplicateSubMerk3(var SMRec: Record "PMP15 Sub Merk"; xSMRec: Record "PMP15 Sub Merk")
     var
         SubMerkRec3: Record "PMP15 Sub Merk";
     begin
         SubMerkRec3.SetRange(Type, SubMerkRec3.Type::"Sub Merk 3");
         SubMerkRec3.SetRange("Tobacco Type", SMRec."Tobacco Type");
+        SubMerkRec3.SetRange(Code, SMRec.Code);
         SubMerkRec3.SetRange("Sub Merk 2 Code", SMRec."Sub Merk 2 Code");
         if SubMerkRec3.Count > 0 then begin
             SMRec."Sub Merk 2 Code" := xSMRec."Sub Merk 2 Code";

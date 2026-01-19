@@ -12,7 +12,7 @@ page 60415 "PMP15 Sort-Det. Result Subform"
     // ============================================================================================================
     // 2025/09/12  SW         PMP15         -                           Create Page
     // 
-    
+
     ApplicationArea = All;
     Caption = 'Sortation Detail Result';
     PageType = ListPart;

@@ -24,12 +24,12 @@ pageextension 60426 "PMP15 Ext. Company Setup Ext" extends "PMP07 Extended Compa
                 Caption = 'Sortation Prod. Order Nos.';
                 ToolTip = 'Specifies the No. Series to be used when creating Sortation Production Orders. Select from the available No. Series.';
             }
-            field("PMP15 Inspect-Prod. Order Nos."; Rec."PMP15 Inspect-Prod. Order Nos.")
-            {
-                ApplicationArea = All;
-                Caption = 'Inspection Prod. Order Nos.';
-                ToolTip = 'Specifies the No. Series to be used when creating Inspection Production Orders. Select from the available No. Series.';
-            }
+            // field("PMP15 Inspect-Prod. Order Nos."; Rec."PMP15 Inspect-Prod. Order Nos.")
+            // {
+            //     ApplicationArea = All;
+            //     Caption = 'Inspection Prod. Order Nos.';
+            //     ToolTip = 'Specifies the No. Series to be used when creating Inspection Production Orders. Select from the available No. Series.';
+            // }
             field("PMP15 SOR Output Jnl. Template"; Rec."PMP15 SOR Output Jnl. Template")
             {
                 ApplicationArea = All;

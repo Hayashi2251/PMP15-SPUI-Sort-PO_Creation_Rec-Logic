@@ -16,6 +16,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
     ApplicationArea = All;
     Caption = 'Sortation Prod. Order Recording';
     PageType = NavigatePage;
+    UsageCategory = Tasks;
     // PageType = Card;
     SourceTable = "PMP15 Sortation PO Recording";
     SourceTableTemporary = true;
@@ -100,9 +101,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                     trigger OnLookup(var Text: Text): Boolean
                     var
                         SORStepRec: Record "PMP15 Sortation Master Data";
-                        BinRec: Record Bin;
                     begin
                         SORStepRec.Reset();
+                        SORStepRec.SetCurrentKey(Step);
+                        SORStepRec.SetAscending(Step, true);
                         if Page.RunModal(Page::"PMP15 Sortation Step", SORStepRec) = Action::LookupOK then begin
                             SORStep_Step := SORStepRec.Step;
                             Rec."SORStep Step" := SORStepRec.Step;
@@ -113,14 +115,42 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                             end else begin
                                 Rec."Sortation Step" := StrSubstNo('%1-%2', SORStepRec.Step, SORStepRec.Code);
                             end;
-                            BinRec.Reset();
-                            BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(SORStep_Step));
-                            if BinRec.FindFirst() then begin
-                                Rec."From Bin Code" := BinRec."PMP15 Previous Bin";
-                                Rec."To Bin Code" := BinRec.Code;
-                            end;
+
+                            SetFromANDToBinCodebasedonSortationStep(Rec, SORStep_Step);
+
+                            CalculateAvailableQtybasedonSORStep(Rec, SORStep_Step);
                         end;
                         // CurrPage.Update(true);
+                    end;
+
+                    trigger OnValidate()
+                    var
+                        SORStepRec: Record "PMP15 Sortation Master Data";
+                        BinRec: Record Bin;
+                    begin
+                        SORStepRec.Reset();
+                        SORStepRec.SetRange(Step, SORProdOrdMgmt.ConvertCode_toSortationStepEnum(Rec."Sortation Step"));
+                        if SORStepRec.FindFirst() then begin
+                            SORStep_Step := SORStepRec.Step;
+                            Rec."SORStep Step" := SORStepRec.Step;
+                            SORStep_Code := SORStepRec.Code;
+                            Rec."SORStep Code" := SORStepRec.Code;
+                            if SORStep_Step = SORStep_Step::" " then begin
+                                Rec."Sortation Step" := StrSubstNo('X-%1', SORStepRec.Code);
+                            end else begin
+                                Rec."Sortation Step" := StrSubstNo('%1-%2', SORStepRec.Step, SORStepRec.Code);
+                            end;
+
+                            SetFromANDToBinCodebasedonSortationStep(Rec, SORStep_Step);
+
+                            CalculateAvailableQtybasedonSORStep(Rec, SORStep_Step);
+                            // BinRec.Reset();
+                            // BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(SORStep_Step));
+                            // if BinRec.FindFirst() then begin
+                            //     Rec."From Bin Code" := BinRec."PMP15 Previous Bin";
+                            //     Rec."To Bin Code" := BinRec.Code;
+                            // end;
+                        end;
                     end;
                 }
                 field("Location Code"; Rec."Location Code")
@@ -182,6 +212,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                 }
                 //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
 
+                #region STEP 0
                 group(Result_STEP_0)
                 {
                     Caption = 'Result';
@@ -197,10 +228,13 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                             BinContent: Record "Bin Content";
                         begin
                             PkgNoRec.Reset();
-                            PkgNoRec.SetAutoCalcFields();
                             if SORStep_Step = SORStep_Step::"0" then begin
-                                PkgNoRec.SetRange("Item No.", rec."Unsorted Item No.");
-                                PkgNoRec.SetRange("Variant Code", Rec."Unsorted Variant Code");
+                                PkgNoRec.SetFilter("Location Filter", Rec."Location Code");
+                                PkgNoRec.SetFilter("Bin Filter", Rec."From Bin Code");
+                                PkgNoRec.SetRange("Item No.", rec."RM Item No.");
+                                PkgNoRec.SetRange("Variant Code", Rec."RM Variant Code");
+                                PkgNoRec.SetRange("PMP04 Lot No.", Rec."Lot No.");
+                                PkgNoRec.SetAutoCalcFields("PMP04 Bin Code", "PMP04 Lot No.", Inventory);
                                 PkgNoRec.SetFilter(Inventory, '>%1', 0);
                                 PkgNoRec.SetRange("PMP04 Bin Code", Rec."From Bin Code");
                                 if Page.RunModal(Page::"Package No. Information List", PkgNoRec) = Action::LookupOK then begin
@@ -208,8 +242,8 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                                     BinContent.Reset();
                                     BinContent.CalcFields("Quantity (Base)");
                                     if SORStep_Step = SORStep_Step::"0" then begin
-                                        BinContent.SetRange("Item No.", Rec."Unsorted Item No.");
-                                        BinContent.SetFilter("Variant Code", Rec."Unsorted Variant Code");
+                                        BinContent.SetRange("Item No.", Rec."RM Item No.");
+                                        BinContent.SetFilter("Variant Code", Rec."RM Variant Code");
                                         BinContent.SetFilter("Quantity (Base)", '>%1', 0);
                                         BinContent.SetFilter("Bin Code", Rec."From Bin Code");
                                         // Filter Totals
@@ -233,8 +267,8 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                             BinContent.Reset();
                             BinContent.CalcFields("Quantity (Base)");
                             if SORStep_Step = SORStep_Step::"0" then begin
-                                BinContent.SetRange("Item No.", Rec."Unsorted Item No.");
-                                BinContent.SetFilter("Variant Code", Rec."Unsorted Variant Code");
+                                BinContent.SetRange("Item No.", Rec."RM Item No.");
+                                BinContent.SetFilter("Variant Code", Rec."RM Variant Code");
                                 BinContent.SetFilter("Quantity (Base)", '>%1', 0);
                                 BinContent.SetFilter("Bin Code", Rec."From Bin Code");
                                 // Filter Totals
@@ -254,6 +288,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Submerk 1';
                         ToolTip = 'Specifies the value of the Submerk 1 field.', Comment = '%';
+                        Editable = false;
                         trigger OnLookup(var Text: Text): Boolean
                         var
                             Submerk1: Record "PMP15 Sub Merk";
@@ -271,42 +306,49 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'L/R';
                         ToolTip = 'Specifies the value of the L/R field.', Comment = '%';
+                        Visible = false;
                     }
-                    field("Variant Changes0"; Rec."Variant Changes")
-                    {
-                        ApplicationArea = All;
-                        Caption = 'Variant Changes';
-                        ToolTip = 'Specifies the value of the Variant Changes field.', Comment = '%';
-                    }
-                    field("Return to Result Step0"; Rec."Return to Result Step")
-                    {
-                        ApplicationArea = All;
-                        Caption = 'Return to Result Step';
-                        ToolTip = 'Specifies the value of the Return to Result Step field.', Comment = '%';
-                        trigger OnLookup(var Text: Text): Boolean
-                        var
-                            SORStepRec: Record "PMP15 Sortation Master Data";
-                            BinRec: Record Bin;
-                        begin
-                            SORStepRec.Reset();
-                            if Page.RunModal(Page::"PMP15 Sortation Step", SORStepRec) = Action::LookupOK then begin
-                                ReturnSORStep_Step := SORStepRec.Step;
-                                ReturnSORStep_Code := SORStepRec.Code;
-                                Rec."SORStep Return Step" := SORStepRec.Step;
-                                Rec."SORStep Return Code" := SORStepRec.Code;
-                                Rec."Return to Result Step" := StrSubstNo('%1-%2', SORStepRec.Step, SORStepRec.Code);
-                                BinRec.Reset();
-                                BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(ReturnSORStep_Step));
-                                if BinRec.FindFirst() then begin
-                                    Rec."To Bin Code" := BinRec.Code;
-                                end;
-                                BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(SORStep_Step));
-                                if BinRec.FindFirst() then begin
-                                    Rec."From Bin Code" := BinRec.Code;
-                                end;
-                            end;
-                        end;
-                    }
+                    #region REMOVED
+                    // field("Variant Changes0"; Rec."Variant Changes")
+                    // {
+                    //     ApplicationArea = All;
+                    //     Caption = 'Variant Changes';
+                    //     ToolTip = 'Specifies the value of the Variant Changes field.', Comment = '%';
+                    //     Visible = false;
+                    // }
+                    // field("Return to Result Step0"; Rec."Return to Result Step")
+                    // {
+                    //     ApplicationArea = All;
+                    //     Caption = 'Return to Result Step';
+                    //     ToolTip = 'Specifies the value of the Return to Result Step field.', Comment = '%';
+                    //     Visible = false;
+                    //     trigger OnLookup(var Text: Text): Boolean
+                    //     var
+                    //         SORStepRec: Record "PMP15 Sortation Master Data";
+                    //         BinRec: Record Bin;
+                    //     begin
+                    //         SORStepRec.Reset();
+                    //         SORStepRec.SetCurrentKey(Step);
+                    //         SORStepRec.SetAscending(Step, true);
+                    //         if Page.RunModal(Page::"PMP15 Sortation Step", SORStepRec) = Action::LookupOK then begin
+                    //             ReturnSORStep_Step := SORStepRec.Step;
+                    //             ReturnSORStep_Code := SORStepRec.Code;
+                    //             Rec."SORStep Return Step" := SORStepRec.Step;
+                    //             Rec."SORStep Return Code" := SORStepRec.Code;
+                    //             Rec."Return to Result Step" := StrSubstNo('%1-%2', SORStepRec.Step, SORStepRec.Code);
+                    //             BinRec.Reset();
+                    //             BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(ReturnSORStep_Step));
+                    //             if BinRec.FindFirst() then begin
+                    //                 Rec."To Bin Code" := BinRec.Code;
+                    //             end;
+                    //             BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(SORStep_Step));
+                    //             if BinRec.FindFirst() then begin
+                    //                 Rec."From Bin Code" := BinRec.Code;
+                    //             end;
+                    //         end;
+                    //     end;
+                    // }
+                    #endregion REMOVED
                     field(Quantity0; Rec.Quantity)
                     {
                         ApplicationArea = All;
@@ -318,8 +360,11 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Unit of Measure Code';
                         ToolTip = 'Specifies the value of the Unit of Measure Code field.', Comment = '%';
+                        Editable = false;
                     }
                 } // STEP 0
+                #endregion STEP 0
+                #region STEP 1
                 group(Result_STEP_1)
                 {
                     Caption = 'Result';
@@ -333,6 +378,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         trigger OnValidate()
                         var
                             Bins: Record Bin;
+                            SORStepRec: Record "PMP15 Sortation Master Data";
                         begin
                             Bins.Reset();
                             if (SORStep_Step <> SORStep_Step::"4") AND (Rec."Tobacco Type" = Rec."Tobacco Type"::Filler) then begin
@@ -341,13 +387,14 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                                 if Bins.FindFirst() then begin
                                     Rec."To Bin Code" := Bins.Code;
                                 end;
-                            end;
-                            if (SORStep_Step = SORStep_Step::"4") AND (Rec."Tobacco Type" = Rec."Tobacco Type"::Filler) then begin
+                            end else if (SORStep_Step = SORStep_Step::"4") AND (Rec."Tobacco Type" = Rec."Tobacco Type"::Filler) then begin
                                 Bins.SetRange("Location Code", Rec."Location Code");
                                 Bins.SetRange("PMP15 Bin Type", Bins."PMP15 Bin Type"::Filler);
                                 if Bins.FindFirst() then begin
                                     Rec."From Bin Code" := Bins.Code;
                                 end;
+                            end else begin
+                                SetFromANDToBinCodebasedonSortationStep(Rec, SORStep_Step);
                             end;
                         end;
                     }
@@ -356,6 +403,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Submerk 1';
                         ToolTip = 'Specifies the value of the Submerk 1 field.', Comment = '%';
+                        Editable = false;
                         // Visible = (SORStep_Step = SORStep_Step::"0") OR (SORStep_Step = SORStep_Step::"1") OR (SORStep_Step = SORStep_Step::"2") OR (SORStep_Step = SORStep_Step::"3") OR (SORStep_Step = SORStep_Step::"4");
                         trigger OnLookup(var Text: Text): Boolean
                         var
@@ -374,13 +422,14 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'L/R';
                         ToolTip = 'Specifies the value of the L/R field.', Comment = '%';
+                        Visible = false;
                     }
                     field("Variant Changes1"; Rec."Variant Changes")
                     {
                         ApplicationArea = All;
                         Caption = 'Variant Changes';
                         ToolTip = 'Specifies the value of the Variant Changes field.', Comment = '%';
-                        // Visible = SORStep_Step = SORStep_Step::"4";
+                        Visible = false;
                     }
                     field("Return to Result Step1"; Rec."Return to Result Step")
                     {
@@ -393,7 +442,15 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                             BinRec: Record Bin;
                         begin
                             SORStepRec.Reset();
+                            SORStepRec.SetCurrentKey(Step);
+                            SORStepRec.SetAscending(Step, true);
                             if Page.RunModal(Page::"PMP15 Sortation Step", SORStepRec) = Action::LookupOK then begin
+                                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                                if (SORProdOrdMgmt.ConvertEnumSortationStep_toInteger(SORStep_Step) - SORProdOrdMgmt.ConvertEnumSortationStep_toInteger(SORStepRec.Step)) > 1 then begin
+                                    Error('Return to Result Step must be exactly one step lower than the current step.');
+                                end;
+                                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+
                                 ReturnSORStep_Step := SORStepRec.Step;
                                 ReturnSORStep_Code := SORStepRec.Code;
                                 Rec."SORStep Return Step" := SORStepRec.Step;
@@ -411,6 +468,16 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                             end;
                         end;
                     }
+                    field(AvailableQty1; AvailableQty)
+                    {
+                        ApplicationArea = All;
+                        Caption = 'Available Quantity Step 1';
+                        ShowCaption = false;
+                        Editable = false;
+                        Style = Ambiguous;
+                        Visible = false;
+                        ToolTip = 'Specifies the value of the Available Quantity field.', Comment = '%';
+                    }
                     field(Quantity1; Rec.Quantity)
                     {
                         ApplicationArea = All;
@@ -422,8 +489,11 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Unit of Measure Code';
                         ToolTip = 'Specifies the value of the Unit of Measure Code field.', Comment = '%';
+                        Editable = false;
                     }
                 } // STEP 1
+                #endregion STEP 1
+                #region STEP 2
                 group(Result_STEP_2)
                 {
                     Caption = 'Result';
@@ -434,6 +504,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         Caption = 'Tobacco Type';
                         ToolTip = 'Specifies the value of the Tobacco Type field.', Comment = '%';
                         NotBlank = true;
+                        ValuesAllowed = "Wrapper", "Filler", "PW";
                         trigger OnValidate()
                         var
                             Bins: Record Bin;
@@ -445,13 +516,14 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                                 if Bins.FindFirst() then begin
                                     Rec."To Bin Code" := Bins.Code;
                                 end;
-                            end;
-                            if (SORStep_Step = SORStep_Step::"4") AND (Rec."Tobacco Type" = Rec."Tobacco Type"::Filler) then begin
+                            end else if (SORStep_Step = SORStep_Step::"4") AND (Rec."Tobacco Type" = Rec."Tobacco Type"::Filler) then begin
                                 Bins.SetRange("Location Code", Rec."Location Code");
                                 Bins.SetRange("PMP15 Bin Type", Bins."PMP15 Bin Type"::Filler);
                                 if Bins.FindFirst() then begin
                                     Rec."From Bin Code" := Bins.Code;
                                 end;
+                            end else begin
+                                SetFromANDToBinCodebasedonSortationStep(Rec, SORStep_Step);
                             end;
                         end;
                     }
@@ -460,6 +532,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Submerk 1';
                         ToolTip = 'Specifies the value of the Submerk 1 field.', Comment = '%';
+                        Editable = false;
                         trigger OnLookup(var Text: Text): Boolean
                         var
                             Submerk1: Record "PMP15 Sub Merk";
@@ -483,6 +556,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         begin
                             Submerk2.Reset();
                             Submerk2.SetRange(Type, Submerk2.Type::"Sub Merk 2");
+                            Submerk2.SetRange("Tobacco Type", Rec."Tobacco Type");
                             Submerk2.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 2", Submerk2) = Action::LookupOK then begin
                                 Rec."Submerk 2" := Submerk2.Code;
@@ -500,6 +574,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Variant Changes';
                         ToolTip = 'Specifies the value of the Variant Changes field.', Comment = '%';
+                        Visible = false;
                     }
                     field("Return to Result Step2"; Rec."Return to Result Step")
                     {
@@ -512,7 +587,14 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                             BinRec: Record Bin;
                         begin
                             SORStepRec.Reset();
+                            SORStepRec.SetCurrentKey(Step);
+                            SORStepRec.SetAscending(Step, true);
                             if Page.RunModal(Page::"PMP15 Sortation Step", SORStepRec) = Action::LookupOK then begin
+                                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                                if (SORProdOrdMgmt.ConvertEnumSortationStep_toInteger(SORStep_Step) - SORProdOrdMgmt.ConvertEnumSortationStep_toInteger(SORStepRec.Step)) > 1 then begin
+                                    Error('Return to Result Step must be exactly one step lower than the current step.');
+                                end;
+                                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
                                 ReturnSORStep_Step := SORStepRec.Step;
                                 ReturnSORStep_Code := SORStepRec.Code;
                                 Rec."SORStep Return Step" := SORStepRec.Step;
@@ -530,6 +612,16 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                             end;
                         end;
                     }
+                    field(AvailableQty2; AvailableQty)
+                    {
+                        ApplicationArea = All;
+                        Caption = 'Available Quantity Step 2';
+                        ShowCaption = false;
+                        Editable = false;
+                        Style = Ambiguous;
+                        Visible = false;
+                        ToolTip = 'Specifies the value of the Available Quantity field.', Comment = '%';
+                    }
                     field(Quantity2; Rec.Quantity)
                     {
                         ApplicationArea = All;
@@ -541,8 +633,11 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Unit of Measure Code';
                         ToolTip = 'Specifies the value of the Unit of Measure Code field.', Comment = '%';
+                        Editable = false;
                     }
                 } // STEP 2
+                #endregion STEP 2
+                #region STEP 3
                 group(Result_STEP_3)
                 {
                     Caption = 'Result';
@@ -553,6 +648,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         Caption = 'Tobacco Type';
                         ToolTip = 'Specifies the value of the Tobacco Type field.', Comment = '%';
                         NotBlank = true;
+                        ValuesAllowed = "Wrapper", "Filler", "PW";
                         trigger OnValidate()
                         var
                             Bins: Record Bin;
@@ -564,13 +660,14 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                                 if Bins.FindFirst() then begin
                                     Rec."To Bin Code" := Bins.Code;
                                 end;
-                            end;
-                            if (SORStep_Step = SORStep_Step::"4") AND (Rec."Tobacco Type" = Rec."Tobacco Type"::Filler) then begin
+                            end else if (SORStep_Step = SORStep_Step::"4") AND (Rec."Tobacco Type" = Rec."Tobacco Type"::Filler) then begin
                                 Bins.SetRange("Location Code", Rec."Location Code");
                                 Bins.SetRange("PMP15 Bin Type", Bins."PMP15 Bin Type"::Filler);
                                 if Bins.FindFirst() then begin
                                     Rec."From Bin Code" := Bins.Code;
                                 end;
+                            end else begin
+                                SetFromANDToBinCodebasedonSortationStep(Rec, SORStep_Step);
                             end;
                         end;
                     }
@@ -579,6 +676,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Submerk 1';
                         ToolTip = 'Specifies the value of the Submerk 1 field.', Comment = '%';
+                        Editable = false;
                         trigger OnLookup(var Text: Text): Boolean
                         var
                             Submerk1: Record "PMP15 Sub Merk";
@@ -602,6 +700,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         begin
                             Submerk2.Reset();
                             Submerk2.SetRange(Type, Submerk2.Type::"Sub Merk 2");
+                            Submerk2.SetRange("Tobacco Type", Rec."Tobacco Type");
                             Submerk2.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 2", Submerk2) = Action::LookupOK then begin
                                 Rec."Submerk 2" := Submerk2.Code;
@@ -619,46 +718,54 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         begin
                             Submerk3.Reset();
                             Submerk3.SetRange(Type, Submerk3.Type::"Sub Merk 3");
+                            Submerk3.SetRange("Tobacco Type", Rec."Tobacco Type");
+                            Submerk3.SetRange("Sub Merk 2 Code", Rec."Submerk 2");
                             Submerk3.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 3", Submerk3) = Action::LookupOK then begin
                                 Rec."Submerk 3" := Submerk3.Code;
                             end;
                         end;
                     }
-                    field("Submerk 43"; Rec."Submerk 4")
-                    {
-                        ApplicationArea = All;
-                        Caption = 'Submerk 4';
-                        ToolTip = 'Specifies the value of the Submerk 4 field.', Comment = '%';
-                        trigger OnLookup(var Text: Text): Boolean
-                        var
-                            Submerk4: Record "PMP15 Sub Merk";
-                        begin
-                            Submerk4.Reset();
-                            Submerk4.SetRange(Type, Submerk4.Type::"Sub Merk 4");
-                            Submerk4.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
-                            if Page.RunModal(Page::"PMP15 Sub Merk 4", Submerk4) = Action::LookupOK then begin
-                                Rec."Submerk 4" := Submerk4.Code;
-                            end;
-                        end;
-                    }
-                    field("Submerk 53"; Rec."Submerk 5")
-                    {
-                        ApplicationArea = All;
-                        Caption = 'Submerk 5';
-                        ToolTip = 'Specifies the value of the Submerk 5 field.', Comment = '%';
-                        trigger OnLookup(var Text: Text): Boolean
-                        var
-                            Submerk5: Record "PMP15 Sub Merk";
-                        begin
-                            Submerk5.Reset();
-                            Submerk5.SetRange(Type, Submerk5.Type::"Sub Merk 5");
-                            Submerk5.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
-                            if Page.RunModal(Page::"PMP15 Sub Merk 5", Submerk5) = Action::LookupOK then begin
-                                Rec."Submerk 5" := Submerk5.Code;
-                            end;
-                        end;
-                    }
+                    #region REMOVED
+                    // field("Submerk 43"; Rec."Submerk 4")
+                    // {
+                    //     ApplicationArea = All;
+                    //     Caption = 'Submerk 4';
+                    //     ToolTip = 'Specifies the value of the Submerk 4 field.', Comment = '%';
+                    //     Editable = false;
+                    //     visible = false;
+                    //     trigger OnLookup(var Text: Text): Boolean
+                    //     var
+                    //         Submerk4: Record "PMP15 Sub Merk";
+                    //     begin
+                    //         Submerk4.Reset();
+                    //         Submerk4.SetRange(Type, Submerk4.Type::"Sub Merk 4");
+                    //         Submerk4.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
+                    //         if Page.RunModal(Page::"PMP15 Sub Merk 4", Submerk4) = Action::LookupOK then begin
+                    //             Rec."Submerk 4" := Submerk4.Code;
+                    //         end;
+                    //     end;
+                    // }
+                    // field("Submerk 53"; Rec."Submerk 5")
+                    // {
+                    //     ApplicationArea = All;
+                    //     Caption = 'Submerk 5';
+                    //     ToolTip = 'Specifies the value of the Submerk 5 field.', Comment = '%';
+                    //     Editable = false;
+                    //     Visible = false;
+                    //     trigger OnLookup(var Text: Text): Boolean
+                    //     var
+                    //         Submerk5: Record "PMP15 Sub Merk";
+                    //     begin
+                    //         Submerk5.Reset();
+                    //         Submerk5.SetRange(Type, Submerk5.Type::"Sub Merk 5");
+                    //         Submerk5.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
+                    //         if Page.RunModal(Page::"PMP15 Sub Merk 5", Submerk5) = Action::LookupOK then begin
+                    //             Rec."Submerk 5" := Submerk5.Code;
+                    //         end;
+                    //     end;
+                    // }
+                    #endregion REMOVED
                     field("L/R3"; Rec."L/R")
                     {
                         ApplicationArea = All;
@@ -670,6 +777,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Variant Changes';
                         ToolTip = 'Specifies the value of the Variant Changes field.', Comment = '%';
+                        Visible = false;
                     }
                     field("Return to Result Step3"; Rec."Return to Result Step")
                     {
@@ -682,7 +790,14 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                             BinRec: Record Bin;
                         begin
                             SORStepRec.Reset();
+                            SORStepRec.SetCurrentKey(Step);
+                            SORStepRec.SetAscending(Step, true);
                             if Page.RunModal(Page::"PMP15 Sortation Step", SORStepRec) = Action::LookupOK then begin
+                                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                                if (SORProdOrdMgmt.ConvertEnumSortationStep_toInteger(SORStep_Step) - SORProdOrdMgmt.ConvertEnumSortationStep_toInteger(SORStepRec.Step)) > 1 then begin
+                                    Error('Return to Result Step must be exactly one step lower than the current step.');
+                                end;
+                                //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/09 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
                                 ReturnSORStep_Step := SORStepRec.Step;
                                 ReturnSORStep_Code := SORStepRec.Code;
                                 Rec."SORStep Return Step" := SORStepRec.Step;
@@ -700,6 +815,16 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                             end;
                         end;
                     }
+                    field(AvailableQty3; AvailableQty)
+                    {
+                        ApplicationArea = All;
+                        Caption = 'Available Quantity Step 3';
+                        ShowCaption = false;
+                        Editable = false;
+                        Style = Ambiguous;
+                        Visible = false;
+                        ToolTip = 'Specifies the value of the Available Quantity field.', Comment = '%';
+                    }
                     field(Quantity3; Rec.Quantity)
                     {
                         ApplicationArea = All;
@@ -711,8 +836,11 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Unit of Measure Code';
                         ToolTip = 'Specifies the value of the Unit of Measure Code field.', Comment = '%';
+                        Editable = false;
                     }
                 } // STEP 3
+                #endregion STEP 3
+                #region STEP 4
                 group(Result_STEP_4)
                 {
                     Caption = 'Result';
@@ -723,6 +851,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         Caption = 'Tobacco Type';
                         ToolTip = 'Specifies the value of the Tobacco Type field.', Comment = '%';
                         NotBlank = true;
+                        ValuesAllowed = "Wrapper", "Filler", "PW";
                         trigger OnValidate()
                         var
                             Bins: Record Bin;
@@ -734,13 +863,14 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                                 if Bins.FindFirst() then begin
                                     Rec."To Bin Code" := Bins.Code;
                                 end;
-                            end;
-                            if (SORStep_Step = SORStep_Step::"4") AND (Rec."Tobacco Type" = Rec."Tobacco Type"::Filler) then begin
+                            end else if (SORStep_Step = SORStep_Step::"4") AND (Rec."Tobacco Type" = Rec."Tobacco Type"::Filler) then begin
                                 Bins.SetRange("Location Code", Rec."Location Code");
                                 Bins.SetRange("PMP15 Bin Type", Bins."PMP15 Bin Type"::Filler);
                                 if Bins.FindFirst() then begin
                                     Rec."From Bin Code" := Bins.Code;
                                 end;
+                            end else begin
+                                SetFromANDToBinCodebasedonSortationStep(Rec, SORStep_Step);
                             end;
                         end;
                     }
@@ -749,6 +879,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Submerk 1';
                         ToolTip = 'Specifies the value of the Submerk 1 field.', Comment = '%';
+                        Editable = false;
                         trigger OnLookup(var Text: Text): Boolean
                         var
                             Submerk1: Record "PMP15 Sub Merk";
@@ -772,6 +903,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         begin
                             Submerk2.Reset();
                             Submerk2.SetRange(Type, Submerk2.Type::"Sub Merk 2");
+                            Submerk2.SetRange("Tobacco Type", Rec."Tobacco Type");
                             Submerk2.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 2", Submerk2) = Action::LookupOK then begin
                                 Rec."Submerk 2" := Submerk2.Code;
@@ -789,6 +921,8 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         begin
                             Submerk3.Reset();
                             Submerk3.SetRange(Type, Submerk3.Type::"Sub Merk 3");
+                            Submerk3.SetRange("Tobacco Type", Rec."Tobacco Type");
+                            Submerk3.SetRange("Sub Merk 2 Code", Rec."Submerk 2");
                             Submerk3.SetRange("Item Owner Internal", ExtCompanySetup."PMP15 SOR Item Owner Internal");
                             if Page.RunModal(Page::"PMP15 Sub Merk 3", Submerk3) = Action::LookupOK then begin
                                 Rec."Submerk 3" := Submerk3.Code;
@@ -839,14 +973,14 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                             BinContent: Record "Bin Content";
                         begin
                             BinContent.Reset();
-                            BinContent.SetAutoCalcFields();
+                            BinContent.SetAutoCalcFields(Quantity, "Quantity (Base)");
+                            BinContent.SetFilter("Lot No. Filter", Rec."Lot No.");
+                            BinContent.SetFilter("Package No. Filter", Rec."Package No.");
                             BinContent.SetRange("Item No.", Rec."Unsorted Item No.");
                             BinContent.SetFilter("Variant Code", Rec."Unsorted Variant Code");
                             BinContent.SetFilter("Quantity (Base)", '>%1', 0);
                             BinContent.SetFilter("Bin Code", Rec."From Bin Code");
                             // Filter Totals
-                            BinContent.SetFilter("Lot No. Filter", Rec."Lot No.");
-                            BinContent.SetFilter("Package No. Filter", Rec."Package No.");
                             if BinContent.FindFirst() then begin
                                 BinContent.CalcFields("Quantity (Base)");
                                 Rec.Quantity := BinContent."Quantity (Base)";
@@ -870,12 +1004,15 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         ApplicationArea = All;
                         Caption = 'Return to Result Step';
                         ToolTip = 'Specifies the value of the Return to Result Step field.', Comment = '%';
+                        Visible = false;
                         trigger OnLookup(var Text: Text): Boolean
                         var
                             SORStepRec: Record "PMP15 Sortation Master Data";
                             BinRec: Record Bin;
                         begin
                             SORStepRec.Reset();
+                            SORStepRec.SetCurrentKey(Step);
+                            SORStepRec.SetAscending(Step, true);
                             if Page.RunModal(Page::"PMP15 Sortation Step", SORStepRec) = Action::LookupOK then begin
                                 ReturnSORStep_Step := SORStepRec.Step;
                                 ReturnSORStep_Code := SORStepRec.Code;
@@ -900,13 +1037,29 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                         Caption = 'Quantity';
                         ToolTip = 'Specifies the value of the Quantity field.', Comment = '%';
                     }
+                    field("Allowance Packing Weight4"; Rec."Allowance Packing Weight")
+                    {
+                        ApplicationArea = All;
+                        Caption = 'Allowance Packing Weight';
+                        ToolTip = 'Specifies the value of the Allowance Packing Weight field.', Comment = '%';
+                        Editable = false;
+                    }
+                    field("Tarre Weight4"; Rec."Tarre Weight")
+                    {
+                        ApplicationArea = All;
+                        Caption = 'Tarre Weight';
+                        ToolTip = 'Specifies the value of the Tarre Weight field.', Comment = '%';
+                        Editable = false;
+                    }
                     field("Unit of Measure Code4"; Rec."Unit of Measure Code")
                     {
                         ApplicationArea = All;
                         Caption = 'Unit of Measure Code';
                         ToolTip = 'Specifies the value of the Unit of Measure Code field.', Comment = '%';
+                        Editable = false;
                     }
-                } // STEP 3
+                } // STEP 4
+                #endregion STEP 4
 
                 //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
                 field("Weighing Scale Quantity"; Rec."Weighing Scale Quantity")
@@ -914,20 +1067,6 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                     ApplicationArea = All;
                     Caption = 'Weighing Scale Quantity';
                     ToolTip = 'Specifies the value of the Weighing Scale Quantity field.', Comment = '%';
-                    Editable = false;
-                }
-                field("Allowance Packing Weight"; Rec."Allowance Packing Weight")
-                {
-                    ApplicationArea = All;
-                    Caption = 'Allowance Packing Weight';
-                    ToolTip = 'Specifies the value of the Allowance Packing Weight field.', Comment = '%';
-                    Editable = false;
-                }
-                field("Tarre Weight"; Rec."Tarre Weight")
-                {
-                    ApplicationArea = All;
-                    Caption = 'Tarre Weight';
-                    ToolTip = 'Specifies the value of the Tarre Weight field.', Comment = '%';
                     Editable = false;
                 }
                 //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/06 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
@@ -946,39 +1085,63 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
                 InFooterBar = true;
                 Visible = (SORStep_Step <> SORStep_Step::"4");
                 trigger OnAction()
+                var
+                    NewPackageNo: Text;
                 begin
                     ValidateInputBeforePosting();
-                    SORProdOrdMgmt.SortProdOrdRecordingPost(ProdOrder, Rec, SORStep_Step);
+                    SORProdOrdMgmt.SortProdOrdRecordingPost(ProdOrder, Rec, SORStep_Step, false);
+                    NewPackageNo := Rec."Package No.";
                     ResetFields();
+                    if SORStep_Step = SORStep_Step::"4" then begin
+                        Rec."Package No." := NewPackageNo;
+                    end;
                 end;
             }
             action("Post & Print")
             {
-                // UNDER DESIGN & DEVELOPMENT, STATUS WAITING APP.
                 ApplicationArea = All;
                 Caption = 'Post & Print';
                 Image = PostPrint;
                 InFooterBar = true;
                 Visible = (SORStep_Step = SORStep_Step::"4");
                 trigger OnAction()
+                var
+                    NewPackageNo: Text;
                 begin
+                    Clear(NewPackageNo);
                     ValidateInputBeforePosting();
-                    SORProdOrdMgmt.SortProdOrdRecordingPost(ProdOrder, Rec, SORStep_Step);
+                    SORProdOrdMgmt.SortProdOrdRecordingPost(ProdOrder, Rec, SORStep_Step, false);
+                    NewPackageNo := Rec."Package No.";
                     ResetFields();
+                    if SORStep_Step = SORStep_Step::"4" then begin
+                        Rec."Package No." := NewPackageNo;
+                    end;
+                end;
+            }
+            // LA TEMPORAIRE
+            action("Post & Print Commit")
+            {
+                ApplicationArea = All;
+                Caption = 'Test Commit';
+                Image = PostPrint;
+                InFooterBar = true;
+                Visible = (SORStep_Step = SORStep_Step::"4");
+                trigger OnAction()
+                var
+                    NewPackageNo: Text;
+                begin
+                    Clear(NewPackageNo);
+                    ValidateInputBeforePosting();
+                    SORProdOrdMgmt.SortProdOrdRecordingPost(ProdOrder, Rec, SORStep_Step, true);
+                    NewPackageNo := Rec."Package No.";
+                    ResetFields();
+                    if SORStep_Step = SORStep_Step::"4" then begin
+                        Rec."Package No." := NewPackageNo;
+                    end;
                 end;
             }
         }
     }
-    var
-        ProdOrder: Record "Production Order";
-        ProdOrderLine: Record "Prod. Order Line";
-        ExtCompanySetup: Record "PMP07 Extended Company Setup";
-        SORStep_Step, ReturnSORStep_Step : Enum "PMP15 Sortation Step Enum";
-        SORProdOrdMgmt: Codeunit "PMP15 Sortation PO Mgmt";
-        PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
-        SORStep_Code, ReturnSORStep_Code : Code[50];
-        CurrentStep: Integer;
-        IsSetRecfromProdOrder: Boolean;
 
     trigger OnOpenPage()
     var
@@ -988,6 +1151,7 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
 
         SORStep_Step := SORStep_Step::"0";
         Clear(SORStep_Code);
+        Clear(AvailableQty);
         ExtCompanySetup.Get();
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Item Owner Internal"));
 
@@ -1017,17 +1181,38 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
         Clear(IsSetRecfromProdOrder);
     end;
 
+    var
+        ProdOrder: Record "Production Order";
+        ProdOrderLine: Record "Prod. Order Line";
+        ExtCompanySetup: Record "PMP07 Extended Company Setup";
+        SORStep_Step, ReturnSORStep_Step : Enum "PMP15 Sortation Step Enum";
+        SORProdOrdMgmt: Codeunit "PMP15 Sortation PO Mgmt";
+        PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
+        SORStep_Code, ReturnSORStep_Code : Code[50];
+        CurrentStep: Integer;
+        IsSetRecfromProdOrder: Boolean;
+        AvailableQty: Decimal;
+
     procedure SetProdOrder(var ProdOrderRec: Record "Production Order")
     begin
         ProdOrder := ProdOrderRec;
+
+        if ProdOrder.Status <> ProdOrder.Status::Released then begin
+            Error('The selected production order has not yet been released (current status: %1). Please release the production order before proceeding with this transaction.', ProdOrder.Status);
+        end;
+
         IsSetRecfromProdOrder := true;
     end;
 
+    ///<summary>When user click post, then the Sortation Prod.Order Recording would not close but would reset a few field as described in the procedure</summary>
     local procedure ResetFields()
     begin
         Rec."Posting Date" := WorkDate();
         Rec."Tobacco Type" := Rec."Tobacco Type"::" ";
-        Rec."Submerk 1" := '';
+        if SORStep_Step = SORStep_Step::"0" then begin
+            Rec."Package No." := '';
+        end;
+        // Rec."Submerk 1" := '';
         Rec."Submerk 2" := '';
         Rec."Submerk 3" := '';
         Rec."Submerk 4" := '';
@@ -1039,9 +1224,10 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
         //         Remarks:
         // When user click post, then the Sortation Prod.Order Recording not close but will reset a few field:
         // 1. If previous post, Sortation Step = 4 & the Package No. = Blank then after post fill the Package No.same as Package No.that creates when posting
-        // 2. Reset Tobacco Type, Sub Merk 1, Sub Merk 2, Sub Merk 3, Sub Merk 4, Sub Merk 5, L / R, Variant Changes, Return to Result Step, Quantity to blank
+        // 2. Reset Tobacco Type, Sub Merk 2, Sub Merk 3, Sub Merk 4, Sub Merk 5, L / R, Variant Changes, Return to Result Step, Quantity to blank
     end;
 
+    /// <summary>Validates all mandatory inputs and company setup configurations before allowing the sortation posting process to proceed.</summary>
     local procedure ValidateInputBeforePosting()
     var
         ErrInfo: ErrorInfo;
@@ -1069,6 +1255,43 @@ page 60414 "PMP15 Sort-Prod.Ord Recording"
             PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Output Jnl. Batch"));
             PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Consum.Jnl. Template"));
             PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Consum.Jnl. Batch"));
+        end;
+    end;
+
+    /// <summary>Determines the <b>From Bin</b> and <b>To Bin</b> codes for a sortation record based on the current sortation step's bin type mapping.</summary>
+    local procedure SetFromANDToBinCodebasedonSortationStep(var Rec: Record "PMP15 Sortation PO Recording" temporary; SORStep: Enum "PMP15 Sortation Step Enum")
+    var
+        BinRec: Record Bin;
+    begin
+        BinRec.Reset();
+        BinRec.SetRange("PMP15 Bin Type", SORProdOrdMgmt.GetBinTypeBySortationStep(SORStep));
+        if BinRec.FindFirst() then begin
+            Rec."From Bin Code" := BinRec."PMP15 Previous Bin";
+            Rec."To Bin Code" := BinRec.Code;
+        end;
+    end;
+
+    /// <summary>Calculates the <b>available quantity</b> in the source bin for unsorted items during sortation steps 1-3 based on lot and unit of measure.</summary>
+    local procedure CalculateAvailableQtybasedonSORStep(var Rec: Record "PMP15 Sortation PO Recording" temporary; SORStep: Enum "PMP15 Sortation Step Enum")
+    var
+        BinContent: Record "Bin Content";
+    begin
+        BinContent.Reset();
+
+        BinContent.SetRange("Location Code", Rec."Location Code");
+        BinContent.SetRange("Lot No. Filter", Rec."Lot No.");
+        BinContent.SetRange("Unit of Measure Code", Rec."Unit of Measure Code");
+        if SORStep in [SORStep::"1", SORStep::"2", SORStep::"3"] then begin
+            BinContent.SetRange("Item No.", Rec."Unsorted Item No.");
+            BinContent.SetRange("Variant Code", Rec."Unsorted Variant Code");
+            BinContent.SetRange("Bin Code", Rec."From Bin Code");
+        end else if SORStep = SORStep::"4" then begin
+            // 
+        end;
+        BinContent.SetAutoCalcFields(Quantity, "Quantity (Base)");
+        if BinContent.FindFirst() then begin
+            BinContent.CalcFields("Quantity (Base)");
+            AvailableQty := BinContent."Quantity (Base)";
         end;
     end;
 }

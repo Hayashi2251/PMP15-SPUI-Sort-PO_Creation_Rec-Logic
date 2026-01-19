@@ -143,7 +143,7 @@ page 60422 "PMP15 SOR Inspection Packing"
                     begin
                         LotNoInfo.Reset();
                         LotNoInfo.SetRange("Item No.", Rec."Sorted Item No.");
-                        LotNoInfo.SetRange("Variant Code", Rec."Sorted Variant Code");
+                        LotNoInfo.SetFilter("Variant Code", Rec."Sorted Variant Code");
                         LotNoInfo.CalcFields(Inventory);
                         LotNoInfo.SetFilter(Inventory, '> 0');
                         if Page.RunModal(Page::"Lot No. Information List", LotNoInfo) = Action::LookupOK then begin
@@ -157,6 +157,7 @@ page 60422 "PMP15 SOR Inspection Packing"
                 ApplicationArea = All;
                 Caption = 'Package No. Lists';
                 UpdatePropagation = Both;
+                // Editable = (Rec."Document Status" = Rec."Document Status"::"Open");
                 SubPageLink = "Document No." = field("No.");
             }
         }
@@ -171,7 +172,7 @@ page 60422 "PMP15 SOR Inspection Packing"
             action(GetPackagetoInspect)
             {
                 ApplicationArea = All;
-                Caption = 'Get Pakcage to Inspect';
+                Caption = 'Get Package to Inspect';
                 ToolTip = 'Executes the process to retrieve packages that are ready for inspection within the Sortation Inspection Packing Header document.';
                 Image = GetBinContent;
                 Enabled = Rec."Document Status" <> Rec."Document Status"::Released;
@@ -219,17 +220,38 @@ page 60422 "PMP15 SOR Inspection Packing"
                     Message('The Document is successfully released.');
                 end;
             }
-            action(Process)
+            // LA TEMPORAIRE
+            group(ProcessingGroup)
             {
-                ApplicationArea = All;
-                Caption = 'Process';
-                Image = Process;
-                ToolTip = 'Processes the Sortation Inspection Packing document and executes the defined operations for item inspection and packaging workflow.';
-                Enabled = (Rec."Document Status" = Rec."Document Status"::Released) OR (Rec."Document Status" = Rec."Document Status"::"Partially Processed");
-                trigger OnAction()
-                begin
-                    // 
-                end;
+                action(Process)
+                {
+                    ApplicationArea = All;
+                    Caption = 'Process';
+                    Image = Process;
+                    ToolTip = 'Processes the Sortation Inspection Packing document and executes the defined operations for item inspection and packaging workflow.';
+                    Enabled = (Rec."Document Status" = Rec."Document Status"::Released) OR (Rec."Document Status" = Rec."Document Status"::"Partially Processed");
+                    trigger OnAction()
+                    begin
+                        // Error('To avaoid data inconsistency, this function is blocked for a while in development session. Pardon us for the inconvenience. Thank you.');
+                        SortationMgmt.ProcessSORInpectPkgList(Rec, true);
+                        CurrPage.Update();
+                        Message('The Document is successfully released.');
+                    end;
+                }
+                action(ProcessCommit)
+                {
+                    ApplicationArea = All;
+                    Caption = 'Check Output & Consum. Journal';
+                    ToolTip = 'This feature is intended for development purposes.';
+                    Enabled = (Rec."Document Status" = Rec."Document Status"::Released) OR (Rec."Document Status" = Rec."Document Status"::"Partially Processed");
+                    trigger OnAction()
+                    begin
+                        // Error('To avaoid data inconsistency, this function is blocked for a while in development session. Pardon us for the inconvenience. Thank you.');
+                        SortationMgmt.ProcessSORInpectPkgList(Rec, false);
+                        CurrPage.Update();
+                        Message('The Document is successfully released.');
+                    end;
+                }
             }
         }
         area(Promoted)
@@ -238,7 +260,11 @@ page 60422 "PMP15 SOR Inspection Packing"
             actionref(Print_Promoted; Print) { }
             actionref(Reopen_Promoted; Reopen) { }
             actionref(Release_Promoted; Release) { }
-            actionref(Process_Promoted; Process) { }
+            group(ProcessPost)
+            {
+                actionref(Process_Promoted; Process) { }
+                actionref(ProcessCommit_Promoted; ProcessCommit) { }
+            }
         }
     }
     #endregion ACTIONS
@@ -257,5 +283,7 @@ page 60422 "PMP15 SOR Inspection Packing"
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtComSetup.FieldNo("PMP15 Sort-Prod. Order Nos."));
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtComSetup.FieldNo("PMP15 SOR Location Code"));
         PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtComSetup.FieldNo("PMP15 SOR Item Owner Internal"));
+
+        SortationMgmt.CheckProductionItemTypeforSortationInspectionisExist();
     end;
 }
