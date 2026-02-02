@@ -14,6 +14,7 @@ page 60448 "PMP15 SOR Unpack Pkg. Card"
     // 
     ApplicationArea = All;
     Caption = 'Sortation Unpack Package';
+    DataCaptionFields = "No.", "Sorted Item No.", Type;
     PageType = Card;
     SourceTable = "PMP15 Sortation Unpack Package";
 
@@ -30,12 +31,27 @@ page 60448 "PMP15 SOR Unpack Pkg. Card"
                     ApplicationArea = All;
                     Caption = 'No.';
                     ToolTip = 'Specifies the value of the No. field.', Comment = '%';
+                    trigger OnAssistEdit()
+                    begin
+                        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/22 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                        if Rec.AssistEdit(xRec) then
+                            CurrPage.Update();
+                        //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/22 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    end;
                 }
                 field("Posting Date"; Rec."Posting Date")
                 {
                     ApplicationArea = All;
                     Caption = 'Posting Date';
                     ToolTip = 'Specifies the value of the Posting Date field.', Comment = '%';
+                }
+                field(Status; Rec.Status)
+                {
+                    ApplicationArea = All;
+                    Caption = 'Status';
+                    ToolTip = 'Specifies the value of the Status field.', Comment = '%';
+                    Visible = false;
+                    Editable = false;
                 }
                 field("Type"; Rec."Type")
                 {
@@ -97,6 +113,22 @@ page 60448 "PMP15 SOR Unpack Pkg. Card"
                     Editable = false;
                     Visible = false;
                 }
+                field("No. of Printed"; Rec."No. of Printed")
+                {
+                    ApplicationArea = All;
+                    Caption = 'No. of Printed';
+                    ToolTip = 'Specifies the value of the No. of Printed field.', Comment = '%';
+                    Editable = false;
+                    Visible = false;
+                }
+                field(IsPosted; Rec.IsPosted)
+                {
+                    ApplicationArea = All;
+                    Caption = 'Is Posted ?';
+                    ToolTip = 'Specifies the value of the is posted flag field.', Comment = '%';
+                    Editable = false;
+                    Visible = false;
+                }
 
                 #region BUSINESS CENTRAL (TIMESTAMP) SYSTEM FIELD
                 field(SystemCreatedAt; Rec.SystemCreatedAt)
@@ -147,6 +179,7 @@ page 60448 "PMP15 SOR Unpack Pkg. Card"
                 ApplicationArea = All;
                 SubPageLink = "Document No." = field("No.");
                 UpdatePropagation = Both;
+                Visible = (Rec.Type = Rec.Type::Reclassification) OR (Rec.Type = Rec.Type::Unpack);
             }
             // New Sortation Detail Result
             part(NewDetResSORLine; "PMP15 SOR Unpack New-Det. Res")
@@ -154,6 +187,7 @@ page 60448 "PMP15 SOR Unpack Pkg. Card"
                 ApplicationArea = All;
                 SubPageLink = "Document No." = field("No.");
                 UpdatePropagation = Both;
+                Visible = Rec.Type = Rec.Type::Unpack;
             }
         }
     }
@@ -169,7 +203,7 @@ page 60448 "PMP15 SOR Unpack Pkg. Card"
                 Image = CreateDocument;
                 trigger OnAction()
                 begin
-                    // 
+                    SortProdOrdMgmt.GenerateSORUnpackPackageLines(Rec);
                 end;
             }
             action(Post)
@@ -179,7 +213,7 @@ page 60448 "PMP15 SOR Unpack Pkg. Card"
                 Image = Post;
                 trigger OnAction()
                 begin
-                    // 
+                    SortProdOrdMgmt.PostSORUnpackPackage(Rec);
                 end;
             }
         }
@@ -192,4 +226,21 @@ page 60448 "PMP15 SOR Unpack Pkg. Card"
         }
         #endregion PROMOTED ACTIONS
     }
+
+    trigger OnOpenPage()
+    begin
+        ExtCompanySetup.Get();
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Unpack Package Nos."));
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Output Jnl. Template"));
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Output Jnl. Batch"));
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Consum.Jnl. Template"));
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Consum.Jnl. Batch"));
+    end;
+
+    protected var
+        ExtCompanySetup: Record "PMP07 Extended Company Setup";
+        NoSeriesMgmt: Codeunit "No. Series";
+        PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
+        SortProdOrdMgmt: Codeunit "PMP15 Sortation PO Mgmt";
+
 }

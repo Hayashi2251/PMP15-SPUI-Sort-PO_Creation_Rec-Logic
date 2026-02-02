@@ -15,7 +15,12 @@ page 60449 "PMP15 SOR Unpack Curr-Det. Res"
     ApplicationArea = All;
     Caption = 'Current Sortation Detail Result';
     PageType = ListPart;
+    InsertAllowed = false;
+    DeleteAllowed = false;
+    ModifyAllowed = false;
     Editable = false;
+    AutoSplitKey = true;
+
     SourceTable = "PMP15 SOR Unpack Curr-Det. Res";
 
     layout
@@ -101,7 +106,7 @@ page 60449 "PMP15 SOR Unpack Curr-Det. Res"
                 field(Quantity; Rec.Quantity)
                 {
                     ApplicationArea = All;
-                    Caption = 'uantit';
+                    Caption = 'Quantity';
                     ToolTip = 'Specifies the value of the Quantity field.', Comment = '%';
                     Editable = false;
                 }
@@ -130,6 +135,9 @@ page 60449 "PMP15 SOR Unpack Curr-Det. Res"
                     Editable = false;
                     Visible = false;
                 }
+
+
+
                 #region BUSINESS CENTRAL (TIMESTAMP) SYSTEM FIELD
                 field(SystemCreatedAt; Rec.SystemCreatedAt)
                 {

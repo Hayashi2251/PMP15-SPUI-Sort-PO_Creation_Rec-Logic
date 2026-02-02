@@ -16,6 +16,8 @@ page 60450 "PMP15 SOR Unpack New-Det. Res"
     Caption = 'New Sortation Detail Result';
     PageType = ListPart;
     SourceTable = "PMP15 SOR Unpack New-Det. Res";
+    AutoSplitKey = true;
+    DelayedInsert = true;
 
     layout
     {

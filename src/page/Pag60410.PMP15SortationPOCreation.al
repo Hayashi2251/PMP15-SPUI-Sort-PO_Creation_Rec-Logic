@@ -296,7 +296,7 @@ page 60410 "PMP15 Sortation PO Creation"
         PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
         SortProdOrdMgmt: Codeunit "PMP15 Sortation PO Mgmt";
         SortProdOrdPageCard: Page "PMP15 Sortation Prod. Order";
-        ConfirmationPage: Page "PMP02 Confirmation Page";
+        // ConfirmationPage: Page "PMP02 Confirmation Page";
         ProdOrder: Record "Production Order";
         ExtCompanySetup: Record "PMP07 Extended Company Setup";
         InvDocHeader: Record "Invt. Document Header";

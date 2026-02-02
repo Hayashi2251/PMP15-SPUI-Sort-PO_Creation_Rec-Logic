@@ -2881,7 +2881,6 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         PkgNoInfoList.SetRange("Package No.", SORProdOrdDetLine."Package No.");
         if PkgNoInfoList.FindFirst() then begin
             #region IS ABLE TO SELL
-            // Persyaratan 1 & 2 ITERATIVE
 
             SDR.Reset();
             SDR.SetRange("Item No.", PkgNoInfoList."Item No.");
@@ -3705,7 +3704,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         ExtComSetup: Record "PMP07 Extended Company Setup";
     begin
         IsHandled := false;
-        OnBeforeInsert(Rec, IsHandled);
+        OnBeforeInsertSORInspectionPkgHeader(Rec, IsHandled);
         if IsHandled then
             exit;
 
@@ -3723,7 +3722,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
         Rec."Posting Date" := WorkDate();
     end;
 
-    ///<summary>Automatically assigns the New Item Code & Location Code on a new Sortation Inspection Package Line based on the related Inspection Header.</summary>
+    ///<summary>Automatically assigns the New Item Code and Location Code on a new Sortation Inspection Package Line based on the related Inspection Header.</summary>
     [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Inspection Pkg. Line", OnAfterInsertEvent, '', false, false)]
     local procedure PMP15SetValAfterInsert_OnAfterInsertEvent(var Rec: Record "PMP15 SOR Inspection Pkg. Line"; RunTrigger: Boolean)
     begin
@@ -4877,7 +4876,680 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     #endregion SOR INSPECTION PACKING LIST
 
     #region SOR UNPACK PACKAGE
-    // 
+    [EventSubscriber(ObjectType::Table, Database::"PMP15 Sortation Unpack Package", OnBeforeInsertEvent, '', false, false)]
+    local procedure PMP15SortationUnpackPackage_OnBeforeInsertEvent(var Rec: Record "PMP15 Sortation Unpack Package"; RunTrigger: Boolean)
+    var
+        IsHandled: Boolean;
+        NoSeriesMgmt: Codeunit "No. Series";
+    begin
+        IsHandled := false;
+        OnBeforeInsertSORUnpackingPkgHeader(Rec, IsHandled);
+        if IsHandled then
+            exit;
+
+        if Rec."No." = '' then begin
+            ExtCompanySetup.Get();
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Location Code"));
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Unpack Package Nos."));
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Output Jnl. Batch"));
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Output Jnl. Template"));
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Consum.Jnl. Batch"));
+            PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Consum.Jnl. Template"));
+
+            Rec."No. Series" := Rec.GetNoSeriesCode();
+            Rec."No." := NoSeriesMgmt.GetNextNo(Rec."No. Series");
+        end;
+
+        if Rec."Posting Date" = 0D then begin
+            Rec."Posting Date" := WorkDate();
+        end;
+
+        if Rec."Location Code" = '' then begin
+            ExtCompanySetup.Get();
+            Rec."Location Code" := ExtCompanySetup."PMP15 SOR Location Code";
+        end;
+
+        Rec.Status := Rec.Status::Open;
+    end;
+
+    [EventSubscriber(ObjectType::Table, Database::"PMP15 Sortation Unpack Package", OnAfterValidateEvent, "Sorted Package No.", false, false)]
+    local procedure PMP15ValidateSORPkgNo_OnAfterValidateEvent_SortedPackageNo(var Rec: Record "PMP15 Sortation Unpack Package"; var xRec: Record "PMP15 Sortation Unpack Package"; CurrFieldNo: Integer)
+    var
+        PackageNoInfoRec: Record "Package No. Information";
+    begin
+        PackageNoInfoRec.Reset();
+
+        if Rec."Sorted Package No." <> '' then begin
+            PackageNoInfoRec.SetRange("Item No.", Rec."Sorted Item No.");
+            PackageNoInfoRec.SetRange("Variant Code", Rec."Sorted Variant Code");
+            PackageNoInfoRec.SetRange("Package No.", Rec."Sorted Package No.");
+            if PackageNoInfoRec.FindFirst() then begin
+                PackageNoInfoRec.CalcFields(Inventory, "PMP04 Bin Code", "PMP04 Lot No.");
+                Rec."Bin Code" := PackageNoInfoRec."PMP04 Bin Code";
+            end;
+        end;
+    end;
+
+    [EventSubscriber(ObjectType::Table, Database::"PMP15 SOR Unpack New-Det. Res", OnAfterValidateEvent, "Cur-SOR Det. Res. Line No.", false, false)]
+    local procedure PMP15ValidateCurrSORDetResLineNo_OnAfterValidateEvent_CurrSORDetResLineNo(var Rec: Record "PMP15 SOR Unpack New-Det. Res"; var xRec: Record "PMP15 SOR Unpack New-Det. Res"; CurrFieldNo: Integer)
+    var
+        SORCurrentUnpckLine: Record "PMP15 SOR Unpack Curr-Det. Res";
+    begin
+        if Rec."Document No." <> '' then begin
+            SORCurrentUnpckLine.Reset();
+            SORCurrentUnpckLine.SetRange("Document No.", Rec."Document No.");
+            SORCurrentUnpckLine.SetRange("Line No.", Rec."Cur-SOR Det. Res. Line No.");
+            if SORCurrentUnpckLine.FindFirst() then begin
+                Rec."Sorted Item No." := SORCurrentUnpckLine."Current Sorted Item No.";
+                Rec."Sorted Variant Code" := SORCurrentUnpckLine."Current Sorted Variant Code";
+                Rec."Package No." := SORCurrentUnpckLine."Package No.";
+                Rec."Lot No." := SORCurrentUnpckLine."Lot No.";
+                Rec."Sub Merk 1" := SORCurrentUnpckLine."Sub Merk 1";
+                Rec."Sub Merk 2" := SORCurrentUnpckLine."Sub Merk 2";
+                Rec."Sub Merk 3" := SORCurrentUnpckLine."Sub Merk 3";
+                Rec."Sub Merk 4" := SORCurrentUnpckLine."Sub Merk 4";
+                Rec."Sub Merk 5" := SORCurrentUnpckLine."Sub Merk 5";
+                Rec."L/R" := SORCurrentUnpckLine."L/R";
+                Rec."Qty. to Handle" := SORCurrentUnpckLine.Quantity;
+                Rec."Unit of Measure Code" := SORCurrentUnpckLine."Unit of Measure Code";
+            end;
+        end;
+    end;
+
+    procedure ValidateSORUnpackPackageHeaderbeforeGenerateLines(var SORUnpackHeader: Record "PMP15 Sortation Unpack Package")
+    begin
+        if SORUnpackHeader.Type = SORUnpackHeader.Type::" " then begin
+            Error('The Type field in the document is empty. Please ensure that a valid type is selected before using the Generate Lines function.');
+        end;
+
+        if SORUnpackHeader."Sorted Item No." = '' then begin
+            Error('The Sorted Item No. field in the document is empty. Please ensure that a valid sorted item number is selected before using the Generate Lines function.');
+        end;
+
+        if SORUnpackHeader."Sorted Variant Code" = '' then begin
+            Error('The Sorted Variant Code field in the document is empty. Please ensure that a valid sorted variant code is selected before using the Generate Lines function.');
+        end;
+
+        if SORUnpackHeader."Sorted Package No." = '' then begin
+            Error('The Sorted Package No. field in the document is empty. Please ensure that a valid sorted package number is selected before using the Generate Lines function.');
+        end;
+    end;
+
+    // a.2 At least there is one lines with Field Qty to Handle <> 0 on Sortation Unpack Package Current Detail Result
+    // a.3 For every Sortation Unpack Package Current Detail Result with Qty to Handle <> 0 must has Sortation Unpack Package New Detail Result with total Qty to Handle = Qty to Handle on Sortation Unpack Package Current Detail Result
+    local procedure ValidateforPostFunctioncheckLineswithQtytoHandleatleastHaveOneValue(var SORUnpackHeader: Record "PMP15 Sortation Unpack Package"): Boolean
+    var
+        SORCurrentUnpckLine: Record "PMP15 SOR Unpack Curr-Det. Res";
+        SORNewUnpckLine: Record "PMP15 SOR Unpack New-Det. Res";
+        IsAtleastHaveOneLineswithQtytoHandleHaveValue: Boolean;
+    begin
+        Clear(IsAtleastHaveOneLineswithQtytoHandleHaveValue);
+        SORCurrentUnpckLine.Reset();
+        SORNewUnpckLine.Reset();
+        SORNewUnpckLine.SetRange("Document No.", SORUnpackHeader."No.");
+        if SORNewUnpckLine.FindSet() then
+            repeat
+                if SORNewUnpckLine."Qty. to Handle" <> 0 then begin
+                    SORCurrentUnpckLine.SetRange("Document No.", SORUnpackHeader."No.");
+                    SORCurrentUnpckLine.SetRange("Line No.", SORNewUnpckLine."Cur-SOR Det. Res. Line No.");
+                    if SORCurrentUnpckLine.FindFirst() then begin
+                        if SORNewUnpckLine."Qty. to Handle" = SORCurrentUnpckLine.Quantity then begin
+                            IsAtleastHaveOneLineswithQtytoHandleHaveValue := true;
+                        end;
+                    end;
+                end;
+            until (SORNewUnpckLine.Next() = 0) OR IsAtleastHaveOneLineswithQtytoHandleHaveValue;
+
+        exit(IsAtleastHaveOneLineswithQtytoHandleHaveValue);
+    end;
+
+    procedure GenerateSORUnpackPackageLines(var SORUnpackHeader: Record "PMP15 Sortation Unpack Package")
+    var
+        SORCurrentUnpckLine: Record "PMP15 SOR Unpack Curr-Det. Res";
+        PackageNoInfoRec: Record "Package No. Information";
+        SDRRec: Record "PMP15 Sortation Detail Quality";
+        LastLineNoInt: Integer;
+    begin
+        Clear(LastLineNoInt);
+        SORCurrentUnpckLine.Reset();
+        PackageNoInfoRec.Reset();
+        SDRRec.Reset();
+
+        ValidateSORUnpackPackageHeaderbeforeGenerateLines(SORUnpackHeader);
+
+        // SORCurrentUnpckLine.SetRange("Document No.", SORUnpackHeader."No.");
+        // if SORCurrentUnpckLine.Count > 0 then begin
+        //     if Confirm('There are existing lines in the Current Sortation Detail Result. Do you want to delete all existing lines and regenerate new ones?') then begin
+        //         SORCurrentUnpckLine.DeleteAll();
+        //         Commit();
+        //     end;
+        // end;
+
+        PackageNoInfoRec.SetRange("Item No.", SORUnpackHeader."Sorted Item No.");
+        PackageNoInfoRec.SetRange("Variant Code", SORUnpackHeader."Sorted Variant Code");
+        PackageNoInfoRec.SetRange("Package No.", SORUnpackHeader."Sorted Package No.");
+        if PackageNoInfoRec.FindFirst() then begin
+            PackageNoInfoRec.CalcFields(Inventory, "PMP04 Bin Code", "PMP04 Lot No.");
+
+            SDRRec.SetRange("Item No.", PackageNoInfoRec."Item No.");
+            SDRRec.SetRange("Variant Code", PackageNoInfoRec."Variant Code");
+            SDRRec.SetRange("Package No.", PackageNoInfoRec."Package No.");
+            if SDRRec.FindSet() then
+                repeat
+                    Clear(LastLineNoInt);
+                    LastLineNoInt := GetLastLineNo_SORUnpackCurrentDetailResult(SORUnpackHeader."No.");
+                    if LastLineNoInt mod 10000 > 0 then begin
+                        LastLineNoInt += LastLineNoInt mod 10000;
+                    end else begin
+                        LastLineNoInt += 10000;
+                    end;
+
+                    if SDRRec.Quantity <> 0 then begin
+                        SORCurrentUnpckLine.Init();
+
+                        SORCurrentUnpckLine."Document No." := SORUnpackHeader."No.";
+                        SORCurrentUnpckLine."Line No." := LastLineNoInt;
+                        SORCurrentUnpckLine."Current Sorted Item No." := SDRRec."Item No.";
+                        SORCurrentUnpckLine."Current Sorted Variant Code" := SDRRec."Variant Code";
+                        SORCurrentUnpckLine."Package No." := SDRRec."Package No.";
+                        SORCurrentUnpckLine."Lot No." := SDRRec."Lot No.";
+                        SORCurrentUnpckLine."Sub Merk 1" := SDRRec."Sub Merk 1";
+                        SORCurrentUnpckLine."Sub Merk 2" := SDRRec."Sub Merk 2";
+                        SORCurrentUnpckLine."Sub Merk 3" := SDRRec."Sub Merk 3";
+                        SORCurrentUnpckLine."Sub Merk 4" := SDRRec."Sub Merk 4";
+                        SORCurrentUnpckLine."Sub Merk 5" := SDRRec."Sub Merk 5";
+                        SORCurrentUnpckLine."L/R" := SDRRec."L/R";
+                        SORCurrentUnpckLine.Quantity := SDRRec.Quantity;
+                        SORCurrentUnpckLine."Unit of Measure Code" := SDRRec."Unit of Measure Code";
+
+                        SORCurrentUnpckLine.Insert();
+                    end;
+
+                until SDRRec.Next() = 0;
+
+            if SDRRec.Count > 0 then begin
+                Message('The Sortation Unpacking Package Line generator has been executed successfully.');
+            end;
+
+        end;
+    end;
+
+    procedure Test_InsertItemJnlLineUnpack(var tempItemJnlLine: Record "Item Journal Line" temporary; var SORUnpackHeader: Record "PMP15 Sortation Unpack Package"; var SORNewUnpckLine: Record "PMP15 SOR Unpack New-Det. Res"): Boolean
+    var
+        IJL: Record "Item Journal Line";
+        ItemRec: Record Item;
+        ItemJnlTemplate: Record "Item Journal Template";
+        ItemJnlBatch: Record "Item Journal Batch";
+        LotNoInfo: Record "Lot No. Information";
+        BinRec: Record Bin;
+        LastLineNo: Integer;
+    begin
+        Clear(LastLineNo);
+        IJL.Reset();
+        ItemRec.Reset();
+        ItemJnlTemplate.Reset();
+        ItemJnlBatch.Reset();
+        LotNoInfo.Reset();
+        BinRec.Reset();
+
+        ExtCompanySetup.Get();
+
+        IJL.SetRange("Journal Template Name", ExtCompanySetup."PMP15SORItemReclass.Jnl.Tmpt.");
+        IJL.SetRange("Journal Batch Name", ExtCompanySetup."PMP15SORItemReclass.Jnl.Batch");
+        if IJL.FindLast() then
+            LastLineNo := IJL."Line No.";
+        if LastLineNo mod 10000 > 0 then
+            LastLineNo += LastLineNo mod 10000
+        else
+            LastLineNo += 10000;
+
+        if ItemRec.Get(SORNewUnpckLine."Sorted Item No.") then begin
+            tempItemJnlLine.Init();
+
+            tempItemJnlLine."Journal Template Name" := ExtCompanySetup."PMP15SORItemReclass.Jnl.Tmpt.";
+            tempItemJnlLine."Journal Batch Name" := ExtCompanySetup."PMP15SORItemReclass.Jnl.Batch";
+            tempItemJnlLine."Line No." := LastLineNo;
+            if ItemJnlTemplate.Get(ExtCompanySetup."PMP15SORItemReclass.Jnl.Tmpt.") then begin
+                tempItemJnlLine."Source Code" := ItemJnlTemplate."Source Code";
+            end;
+            // tempItemJnlLine."Source Code" := 'RECLASSJNL';
+            if ItemJnlBatch.Get(ExtCompanySetup."PMP15SORItemReclass.Jnl.Tmpt.", ExtCompanySetup."PMP15SORItemReclass.Jnl.Batch") then begin
+                if ItemJnlBatch."No. Series" <> '' then begin
+                    tempItemJnlLine."Document No." := NoSeriesBatchMgmt.PeekNextNo(ItemJnlBatch."No. Series", SORUnpackHeader."Posting Date");
+                end;
+            end;
+            tempItemJnlLine.Validate("Posting Date", SORUnpackHeader."Posting Date");
+            tempItemJnlLine.Validate("Entry Type", tempItemJnlLine."Entry Type"::Transfer);
+            tempItemJnlLine.Validate("Item No.", ItemRec."No.");
+            tempItemJnlLine.Description := ItemRec.Description;
+            tempItemJnlLine.Validate("Variant Code", SORNewUnpckLine."Sorted Variant Code");
+            tempItemJnlLine.Validate("Location Code", SORUnpackHeader."Location Code");
+            tempItemJnlLine.Validate(Quantity, SORNewUnpckLine."Qty. to Handle");
+            tempItemJnlLine.Validate("Bin Code", SORUnpackHeader."Bin Code");
+            tempItemJnlLine.Validate("New Bin Code", SORUnpackHeader."Bin Code");
+            tempItemJnlLine.Validate("Unit of Measure Code", SORNewUnpckLine."Unit of Measure Code");
+            tempItemJnlLine.Validate("PMP15 Sub Merk 1", SORNewUnpckLine."Sub Merk 1");
+            tempItemJnlLine.Validate("PMP15 Sub Merk 2", SORNewUnpckLine."Sub Merk 2");
+            tempItemJnlLine.Validate("PMP15 Sub Merk 3", SORNewUnpckLine."Sub Merk 3");
+            tempItemJnlLine.Validate("PMP15 Sub Merk 4", SORNewUnpckLine."Sub Merk 4");
+            tempItemJnlLine.Validate("PMP15 Sub Merk 5", SORNewUnpckLine."Sub Merk 5");
+            tempItemJnlLine.Validate("PMP15 L/R", SORNewUnpckLine."L/R");
+
+            if LotNoInformationIsExist(LotNoInfo, tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", SORNewUnpckLine."Lot No.") then begin
+                tempItemJnlLine."PMP15 Crop" := LotNoInfo."PMP14 Crop";
+                tempItemJnlLine."PMP15 Cycle (Separately)" := LotNoInfo."PMP14 Cycle (Separately)";
+                tempItemJnlLine."PMP15 Cycle Code" := LotNoInfo."PMP14 Cycle Code";
+                tempItemJnlLine."Invoice No." := LotNoInfo."PMP14 Invoice No.";
+                tempItemJnlLine."PMP15 Delivery" := LotNoInfo."PMP14 Delivery";
+                tempItemJnlLine."PMP15 Output Item No." := SORNewUnpckLine."Sorted Item No.";
+                tempItemJnlLine."PMP15 Output Variant Code" := SORNewUnpckLine."Sorted Variant Code";
+            end else begin
+                Error('Tidak ada Lot No. Information yang dapat ditemukan untuk Item No. %1, Variant Code %2, dengan Lot No. %3', tempItemJnlLine."Item No.", tempItemJnlLine."Variant Code", tempItemJnlLine."Lot No.");
+            end;
+
+            // BinRec.SetRange("Location Code", tempItemJnlLine."Location Code");
+            // BinRec.SetRange(Code, SORUnpackHeader."Bin Code");
+            // if BinRec.FindFirst() then begin
+            //     tempItemJnlLine."PMP15 SOR Step" := BinRec."PMP15 Bin Type";
+            // end;
+
+            tempItemJnlLine.Validate("PMP15 Production Type", tempItemJnlLine."PMP15 Production Type"::"SOR - Unpacked");
+            tempItemJnlLine."PMP15 Marked" := true;
+
+            if tempItemJnlLine.Insert() then
+                exit(true)
+            else
+                exit(false);
+        end;
+    end;
+
+    procedure InserItemJnlLinefromTempUnpack(var ItemJnlLine: Record "Item Journal Line"; var tempItemJnlLine: Record "Item Journal Line" temporary; SORUnpackHeader: Record "PMP15 Sortation Unpack Package"; IJLEntryType: Enum "Item Ledger Entry Type")
+    var
+        ItemJnlBatch: Record "Item Journal Batch";
+        IJL: Record "Item Journal Line";
+    begin
+        ItemJnlBatch.Reset();
+        IJL.Reset();
+
+        ExtCompanySetup.Get();
+
+        ItemJnlLine.Init();
+        ItemJnlLine := tempItemJnlLine;
+        if IJLEntryType = IJLEntryType::Transfer then begin
+            if ItemJnlBatch.Get(ExtCompanySetup."PMP15SORItemReclass.Jnl.Tmpt.", ExtCompanySetup."PMP15SORItemReclass.Jnl.Batch") then begin
+                if ItemJnlBatch."No. Series" <> '' then begin
+                    ItemJnlLine."Document No." := NoSeriesBatchMgmt.GetNextNo(ItemJnlBatch."No. Series", SORUnpackHeader."Posting Date");
+                end;
+            end;
+        end;
+
+        IJL.SetRange("Journal Template Name", ItemJnlLine."Journal Template Name");
+        IJL.SetRange("Journal Batch Name", ItemJnlLine."Journal Batch Name");
+        IJL.SetRange("Line No.", ItemJnlLine."Line No.");
+        if IJL.FindFirst() then begin
+            IJL.Delete(true);
+        end;
+
+        ItemJnlLine.Insert();
+        ItemJnlLine.Mark(true);
+    end;
+
+    procedure GenerateRecReserveEntryItemJnlLineUnpack(var ItemJnlLine: Record "Item Journal Line"; SORUnpackHeader: Record "PMP15 Sortation Unpack Package"; var SORNewUnpckLine: Record "PMP15 SOR Unpack New-Det. Res")
+    var
+        Item: Record Item;
+        RecReservEntry: Record "Reservation Entry";
+        TrackingSpecification: Record "Tracking Specification";
+        TempTrackingSpecification: Record "Tracking Specification" temporary;
+        PackageNoInfo: Record "Package No. Information";
+        SerLotPkgArr: array[3] of Code[50];
+    begin
+        Clear(SerLotPkgArr);
+        ItemTrackingCode.Reset();
+        RecReservEntry.Reset();
+        TrackingSpecification.Reset();
+        PackageNoInfo.Reset();
+
+        Item.SetLoadFields("Item Tracking Code");
+        if not Item.Get(ItemJnlLine."Item No.") then
+            Error('The specified Item No. "%1" could not be found. Please verify that the item exists in the system.', ItemJnlLine."Item No.");
+
+        if Item."Item Tracking Code" = '' then
+            Error('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', ItemJnlLine."Item No.");
+
+        if ItemJnlLineReserve.ReservEntryExist(ItemJnlLine) then
+            Error('Reservation entries already exist for Item "%1" in this reclassification journal line. Please cancel or delete the existing reservations before performing this action.', ItemJnlLine."Item No.");
+
+        ItemTrackingCode.Get(Item."Item Tracking Code");
+
+        if ItemJnlLine."Entry Type" = ItemJnlLine."Entry Type"::Transfer then begin
+            ItemJnlLineReserve.InitFromItemJnlLine(TempTrackingSpecification, ItemJnlLine);
+            TempTrackingSpecification.Insert();
+            RetrieveLookupData(TempTrackingSpecification, true);
+            TempTrackingSpecification.Delete();
+            TempGlobalEntrySummary.Reset();
+            if ItemTrackingCode."Lot Specific Tracking" then
+                TempGlobalEntrySummary.SetFilter("Lot No.", SORNewUnpckLine."Lot No.");
+            if ItemTrackingCode."Package Specific Tracking" then
+                TempGlobalEntrySummary.SetFilter("Package No.", SORNewUnpckLine."Package No.");
+            if TempGlobalEntrySummary.FindSet() then
+                repeat
+                    Clear(SerLotPkgArr);
+                    if ItemTrackingCode."SN Specific Tracking" then
+                        SerLotPkgArr[1] := TempGlobalEntrySummary."Serial No.";
+                    if ItemTrackingCode."Lot Specific Tracking" then
+                        SerLotPkgArr[2] := TempGlobalEntrySummary."Lot No.";
+                    if ItemTrackingCode."Package Specific Tracking" then
+                        SerLotPkgArr[3] := TempGlobalEntrySummary."Package No.";
+                    InsertReservEntryRecfromTempTrackSpecIJLUnpacking(RecReservEntry, TempTrackingSpecification, ItemJnlLine, SORUnpackHeader, SORNewUnpckLine, SerLotPkgArr);
+                until TempGlobalEntrySummary.Next() = 0
+            else begin
+                PackageNoInfo.SetAutoCalcFields("PMP04 Bin Code", Inventory, "PMP04 Lot No.");
+                PackageNoInfo.SetRange("Item No.", ItemJnlLine."Item No.");
+                PackageNoInfo.SetRange("PMP04 Lot No.", SORNewUnpckLine."Lot No.");
+                PackageNoInfo.SetFilter("Variant Code", ItemJnlLine."Variant Code");
+                PackageNoInfo.SetFilter("PMP04 Bin Code", ItemJnlLine."Bin Code");
+                if PackageNoInfo.FindFirst() then begin
+                    SerLotPkgArr[1] := '';
+                    if ItemTrackingCode."Lot Specific Tracking" then
+                        SerLotPkgArr[2] := PackageNoInfo."PMP04 Lot No.";
+                    if ItemTrackingCode."Package Specific Tracking" then
+                        SerLotPkgArr[3] := PackageNoInfo."Package No.";
+                    // InsertReservEntryRecfromTempTrackSpecIJLUnpacking
+                end else begin
+                    if ItemTrackingCode."Lot Specific Tracking" then
+                        SerLotPkgArr[2] := SORNewUnpckLine."Lot No.";
+                    if ItemTrackingCode."Package Specific Tracking" then
+                        SerLotPkgArr[3] := SORNewUnpckLine."Package No.";
+                    // InsertReservEntryRecfromTempTrackSpecIJLUnpacking
+                end;
+            end;
+        end;
+    end;
+
+    procedure InsertReservEntryRecfromTempTrackSpecIJLUnpacking(var RecReservEntry: Record "Reservation Entry"; var TempTrackingSpecification: Record "Tracking Specification" temporary; var RecItemJnlLine: Record "Item Journal Line"; SORUnpackHeader: Record "PMP15 Sortation Unpack Package"; var SORNewUnpckLine: Record "PMP15 SOR Unpack New-Det. Res"; SerLotPkgArr: array[3] of Code[50])
+    var
+        SourceTrackingSpecification: Record "Tracking Specification";
+        ChangeType: Option Insert,Modify,FullDelete,PartDelete,ModifyAll;
+        ItemTrackingLine: Page "Item Tracking Lines";
+        TypeHelper: Codeunit "Type Helper";
+        ItemRec: Record Item;
+        RecRef: RecordRef;
+    begin
+        ItemRec.Get(RecItemJnlLine."Item No.");
+        RecRef.GetTable(ItemRec);
+        if ItemRec."Item Tracking Code" = '' then
+            PMPAppLogicMgmt.ErrorRecordRefwithAction(RecRef, ItemRec.FieldNo(Description), Page::"Item Card", 'Empty Field', StrSubstNo('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', ItemRec."No."));
+
+        ItemJnlLineReserve.InitFromItemJnlLine(SourceTrackingSpecification, RecItemJnlLine);
+        ItemTrackingLine.SetSourceSpec(SourceTrackingSpecification, 0D);
+        if RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Transfer then begin
+            ItemTrackingLine.SetRunMode(Enum::"Item Tracking Run Mode"::Reclass);
+        end;
+
+        TempTrackingSpecification.Init;
+        TempTrackingSpecification.TransferFields(SourceTrackingSpecification);
+        TempTrackingSpecification.SetItemData(SourceTrackingSpecification."Item No.", SourceTrackingSpecification.Description, SourceTrackingSpecification."Location Code", SourceTrackingSpecification."Variant Code", SourceTrackingSpecification."Bin Code", SourceTrackingSpecification."Qty. per Unit of Measure");
+        TempTrackingSpecification.Validate("Item No.", SourceTrackingSpecification."Item No.");
+        TempTrackingSpecification.Validate("Location Code", SourceTrackingSpecification."Location Code");
+        TempTrackingSpecification.Validate("Creation Date", DT2Date(TypeHelper.GetCurrentDateTimeInUserTimeZone()));
+        TempTrackingSpecification.Validate("Source Type", SourceTrackingSpecification."Source Type");
+        TempTrackingSpecification.Validate("Source Subtype", SourceTrackingSpecification."Source Subtype");
+        TempTrackingSpecification.Validate("Source ID", SourceTrackingSpecification."Source ID");
+        TempTrackingSpecification.Validate("Source Batch Name", SourceTrackingSpecification."Source Batch Name");
+        TempTrackingSpecification.Validate("Source Prod. Order Line", SourceTrackingSpecification."Source Prod. Order Line");
+        TempTrackingSpecification.Validate("Source Ref. No.", SourceTrackingSpecification."Source Ref. No.");
+
+        if RecItemJnlLine."Entry Type" = RecItemJnlLine."Entry Type"::Transfer then begin
+            if (ItemTrackingCode."SN Specific Tracking") AND (SerLotPkgArr[1] <> '') then
+                TempTrackingSpecification.Validate("Serial No.", SerLotPkgArr[1]);
+            if (ItemTrackingCode."Lot Specific Tracking") AND (SerLotPkgArr[2] <> '') then
+                TempTrackingSpecification.Validate("Lot No.", SerLotPkgArr[2]);
+            if (ItemTrackingCode."Package Specific Tracking") AND (SerLotPkgArr[3] <> '') then
+                TempTrackingSpecification.Validate("Package No.", SerLotPkgArr[3]);
+        end else begin
+            if (ItemTrackingCode."SN Specific Tracking") AND (SerLotPkgArr[1] <> '') then
+                TempTrackingSpecification.Validate("Serial No.", SerLotPkgArr[1]);
+            if (ItemTrackingCode."Lot Specific Tracking") AND (SerLotPkgArr[2] <> '') then
+                TempTrackingSpecification.Validate("Lot No.", SerLotPkgArr[2]);
+            if (ItemTrackingCode."Package Specific Tracking") AND (SerLotPkgArr[3] <> '') then
+                TempTrackingSpecification.Validate("Package No.", SerLotPkgArr[3]);
+        end;
+
+        TempTrackingSpecification.Validate("Quantity (Base)", RecItemJnlLine."Quantity (Base)");
+        TempTrackingSpecification.Validate("Qty. to Handle (Base)", RecItemJnlLine."Quantity (Base)");
+        TempTrackingSpecification.Validate("Qty. to Invoice (Base)", RecItemJnlLine."Quantity (Base)");
+        ItemTrackingLine.RegisterChange(TempTrackingSpecification, TempTrackingSpecification, ChangeType::Insert, false);
+    end;
+
+    local procedure InsertNewSORDetailResultfromSORNewUnpackageDetResLine(var SORUnpackHeader: Record "PMP15 Sortation Unpack Package"; var SORNewUnpckLine: Record "PMP15 SOR Unpack New-Det. Res"; IsPositiveQtytoHandle: Boolean)
+    var
+        PackageNoInfoRec: Record "Package No. Information";
+        SDRRec: Record "PMP15 Sortation Detail Quality";
+        NextLineNo: Integer;
+    begin
+        Clear(NextLineNo);
+        PackageNoInfoRec.Reset();
+        SDRRec.Reset();
+
+        // SDRRec.SetCurrentKey("Item No.", "Variant Code", "Package No.", "Sub Merk 1", "Sub Merk 2", "Sub Merk 3", "Sub Merk 4", "Sub Merk 5");
+        // SDRRec.SetRange("Item No.", SORNewUnpckLine."Sorted Item No.");
+        // SDRRec.SetRange("Variant Code", SORNewUnpckLine."Sorted Variant Code");
+        // SDRRec.SetRange("Package No.", SORNewUnpckLine."Package No.");
+        // SDRRec.SetRange("Sub Merk 1", SORNewUnpckLine."Sub Merk 1");
+        // SDRRec.SetRange("Sub Merk 2", SORNewUnpckLine."Sub Merk 2");
+        // SDRRec.SetRange("Sub Merk 3", SORNewUnpckLine."Sub Merk 3");
+        // SDRRec.SetRange("Sub Merk 4", SORNewUnpckLine."Sub Merk 4");
+        // SDRRec.SetRange("Sub Merk 5", SORNewUnpckLine."Sub Merk 5");
+        // if SDRRec.FindLast() then begin
+        //     if SDRRec."SOR Unpack Pkg No." = '' then begin
+        //         if IsPositiveQtytoHandle then
+        //             SDRRec.Quantity += SORNewUnpckLine."Qty. to Handle"
+        //         else
+        //             SDRRec.Quantity += SORNewUnpckLine."Qty. to Handle";
+        //     end;
+        //     SDRRec.Modify();
+        // end else begin
+        SDRRec.Reset();
+        SDRRec.LockTable();
+        SDRRec.SetRange("Item No.", SORNewUnpckLine."Sorted Item No.");
+        SDRRec.SetRange("Variant Code", SORNewUnpckLine."Sorted Variant Code");
+        SDRRec.SetRange("Package No.", SORNewUnpckLine."Package No.");
+        if SDRRec.FindLast() then
+            NextLineNo := SDRRec."Entry No." + 10000
+        else
+            NextLineNo := 10000;
+
+        SDRRec.Init();
+        SDRRec.Validate("Item No.", SORNewUnpckLine."Sorted Item No.");
+        SDRRec.Validate("Variant Code", SORNewUnpckLine."Sorted Variant Code");
+        SDRRec.Validate("Package No.", SORNewUnpckLine."Package No.");
+        SDRRec."Entry No." := NextLineNo;
+        SDRRec.Validate("Lot No.", SORNewUnpckLine."Lot No.");
+        SDRRec.Validate("Sub Merk 1", SORNewUnpckLine."Sub Merk 1");
+        SDRRec.Validate("Sub Merk 2", SORNewUnpckLine."Sub Merk 2");
+        SDRRec.Validate("Sub Merk 3", SORNewUnpckLine."Sub Merk 3");
+        SDRRec.Validate("Sub Merk 4", SORNewUnpckLine."Sub Merk 4");
+        SDRRec.Validate("Sub Merk 5", SORNewUnpckLine."Sub Merk 5");
+        SDRRec.Validate("L/R", SORNewUnpckLine."L/R");
+        // SDRRec.Validate(Quantity, SORNewUnpckLine.Quantity);
+        if IsPositiveQtytoHandle then
+            SDRRec.Quantity := SORNewUnpckLine."Qty. to Handle"
+        else
+            SDRRec.Quantity := SORNewUnpckLine."Qty. to Handle" * (-1);
+
+        SDRRec.Validate("Unit of Measure Code", SORNewUnpckLine."Unit of Measure Code");
+        SDRRec.Validate("SOR Unpack Pkg No.", SORUnpackHeader."No.");
+        SDRRec.Insert();
+        // end;
+
+        CheckPkgNoInfoAbletoSellUnpack(SDRRec, SORNewUnpckLine)
+    end;
+
+    // DUPLICATE FROM CheckPkgNoInfoAbletoSell() FUNCTION ABOVE
+    procedure CheckPkgNoInfoAbletoSellUnpack(var SDRRec: Record "PMP15 Sortation Detail Quality"; var SORNewUnpckLine: Record "PMP15 SOR Unpack New-Det. Res")
+    var
+        PkgNoInfoList: Record "Package No. Information";
+        SDR: Record "PMP15 Sortation Detail Quality";
+        SubmerkGroups, SubmerkCodes : array[5] of Code[50];
+        IsAbletoSell, IsMixed : Boolean;
+        BiggestCode, SmallestCode : Integer;
+    begin
+        PkgNoInfoList.Reset();
+        SDR.Reset();
+        Clear(SubmerkGroups);
+        Clear(SubmerkCodes);
+        Clear(IsAbletoSell);
+        Clear(IsMixed);
+
+        PkgNoInfoList.SetRange("Item No.", SDRRec."Item No.");
+        PkgNoInfoList.SetRange("Variant Code", SDRRec."Variant Code");
+        PkgNoInfoList.SetRange("Package No.", SDRRec."Package No.");
+        if PkgNoInfoList.FindFirst() then begin
+            #region IS ABLE TO SELL
+            SDR.Reset();
+            SDR.SetRange("Item No.", PkgNoInfoList."Item No.");
+            SDR.SetRange("Variant Code", PkgNoInfoList."Variant Code");
+            SDR.SetRange("Package No.", PkgNoInfoList."Package No.");
+            if SDR.FindSet() then
+                repeat
+                    GetSubmerkGROUPfromSORPrdOrdDetLine(SubmerkGroups, SDR);
+                    IsAbletoSell := SubmerkGroups[2] = SubmerkGroups[3];
+
+                    if IsAbletoSell then begin
+                        IsAbletoSell := IsAbletoSell AND
+                            (SubmerkGroups[3] = SubmerkGroups[4]) AND
+                            (SubmerkGroups[2] = SubmerkGroups[4]);
+                    end;
+                until (SDR.Next() = 0) OR not IsAbletoSell;
+
+            if IsAbletoSell then begin
+                SDR.Reset();
+                SDR.SetRange("Item No.", PkgNoInfoList."Item No.");
+                SDR.SetRange("Variant Code", PkgNoInfoList."Variant Code");
+                SDR.SetRange("Package No.", PkgNoInfoList."Package No.");
+                if SDR.Count > 1 then
+                    IsAbletoSell := IsAbletoSell AND not (CalcSubmerk5MinMaxDifference(SDRRec) > 1);
+            end;
+
+            if IsAbletoSell then begin
+                SDR.Reset();
+                SDR.SetCurrentKey("Item No.", "Variant Code", "Package No.");
+                SDR.SetRange("Item No.", SDRRec."Item No.");
+                SDR.SetRange("Variant Code", SDRRec."Variant Code");
+                SDR.SetRange("Package No.", SDRRec."Package No.");
+                SDR.CalcSums(Quantity);
+                IsAbletoSell := IsAbletoSell AND (SDR.Quantity > 35);
+            end;
+            #endregion IS ABLE TO SELL
+
+            #region MIXED
+            if SDR.FindSet() then
+                repeat
+                    if (SDRRec."Sub Merk 1" <> SDR."Sub Merk 1") or
+                    (SDRRec."Sub Merk 2" <> SDR."Sub Merk 2") or
+                    (SDRRec."Sub Merk 3" <> SDR."Sub Merk 3") or
+                    (SDRRec."Sub Merk 4" <> SDR."Sub Merk 4") or
+                    (SDRRec."Sub Merk 5" <> SDR."Sub Merk 5") then begin
+                        IsMixed := true;
+                    end;
+                until (SDR.Next() = 0) OR IsMixed;
+            #endregion MIXED
+
+            Clear(SubmerkCodes);
+            GetSubmerkforBiggestRank(SubmerkCodes, PkgNoInfoList."Item No.", PkgNoInfoList."Variant Code", PkgNoInfoList."Package No.");
+
+            PkgNoInfoList."PMP04 Bale Number" := PkgNoInfoList."Package No.";
+            PkgNoInfoList."PMP15 Able to Sell" := IsAbletoSell;
+            PkgNoInfoList."PMP15 Mixed" := IsMixed;
+            PkgNoInfoList."PMP04 Sub Merk 1" := SubmerkCodes[1];
+            PkgNoInfoList."PMP04 Sub Merk 2" := SubmerkCodes[2];
+            PkgNoInfoList."PMP04 Sub Merk 3" := SubmerkCodes[3];
+            PkgNoInfoList."PMP04 Sub Merk 4" := SubmerkCodes[4];
+            PkgNoInfoList."PMP04 Sub Merk 5" := SubmerkCodes[5];
+            PkgNoInfoList.Modify();
+        end;
+    end;
+
+    procedure PostSORUnpackPackage(var SORUnpackHeader: Record "PMP15 Sortation Unpack Package")
+    var
+        tempItemJnlLine: Record "Item Journal Line" temporary;
+        ItemJnlLine: Record "Item Journal Line";
+        SORNewUnpckLine: Record "PMP15 SOR Unpack New-Det. Res";
+    begin
+        SORNewUnpckLine.Reset();
+
+        tempItemJnlLine.Reset();
+        tempItemJnlLine.DeleteAll();
+
+        // Posting Validation
+        ValidateSORUnpackPackageHeaderbeforeGenerateLines(SORUnpackHeader);
+        if not ValidateforPostFunctioncheckLineswithQtytoHandleatleastHaveOneValue(SORUnpackHeader) then begin
+            Error('Invalid Sortation Unpack Package quantities. Qty to Handle in the Current Detail Result must exist and be fully matched by the total Qty to Handle in the New Detail Result.');
+        end;
+        if not CheckIsLocationBinMandatory(SORUnpackHeader."Location Code") then begin
+            Error('The Location %1 is not Bin Mandatory', SORUnpackHeader."Location Code");
+        end;
+
+        SORNewUnpckLine.SetRange("Document No.", SORUnpackHeader."No.");
+        SORNewUnpckLine.SetFilter("Qty. to Handle", '<> 0');
+        if SORNewUnpckLine.FindSet() then
+            repeat
+                if Test_InsertItemJnlLineUnpack(tempItemJnlLine, SORUnpackHeader, SORNewUnpckLine) then begin
+                    InserItemJnlLinefromTempUnpack(ItemJnlLine, tempItemJnlLine, SORUnpackHeader, ItemJnlLine."Entry Type"::Transfer);
+                    GenerateRecReserveEntryItemJnlLineUnpack(ItemJnlLine, SORUnpackHeader, SORNewUnpckLine);
+
+                    if not PreviewPostingItemJournalLineUnpack(ItemJnlLine) then begin
+                        Error(GetLastErrorCallStack);
+                    end;
+                end;
+            until SORNewUnpckLine.Next() = 0;
+
+        if ItemJnlLine.MarkedOnly(true) then begin
+            if ItemJnlLine.FindSet() then
+                repeat
+                    PostingItemJnlLineSORUnpacking(ItemJnlLine);
+                until ItemJnlLine.Next() = 0;
+
+            Message('The SOR Unpacking posting using the Item Reclassification Journal has been completed successfully.');
+        end else
+            Error('Posting failed from the posting preview by system. Error: %1', GetCollectedErrors());
+
+        SORNewUnpckLine.SetRange("Document No.", SORUnpackHeader."No.");
+        SORNewUnpckLine.SetFilter("Qty. to Handle", '<> 0');
+        if SORNewUnpckLine.FindSet() then
+            repeat
+                InsertNewSORDetailResultfromSORNewUnpackageDetResLine(SORUnpackHeader, SORNewUnpckLine, true);
+                InsertNewSORDetailResultfromSORNewUnpackageDetResLine(SORUnpackHeader, SORNewUnpckLine, false);
+            until SORNewUnpckLine.Next() = 0;
+
+    end;
+
+    procedure PreviewPostingItemJournalLineUnpack(var Rec: Record "Item Journal Line"): Boolean
+    var
+        ItemJnlPost: Codeunit "Item Jnl.-Post";
+        Result: Boolean;
+    begin
+        Rec.MarkedOnly(true);
+
+        Commit();
+        Clear(Result);
+
+        ItemJnlPost.SetPreviewMode(true);
+        if (ItemJnlPost.Run(Rec)) OR (GetLastErrorText() <> PreviewModeErr) then begin
+            DeleteAllMarkedOnlyItemJnlLinePassingByReferenceVar(Rec);
+            ItemJnlPost.Preview(Rec);
+            exit(false); // Failed
+        end;
+        exit(true); // Success
+    end;
+
+    local procedure PostingItemJnlLineSORUnpacking(var ItemJnlLine: Record "Item Journal Line")
+    var
+        ItemJnlBatchPostMgmt: Codeunit "Item Jnl.-Post Batch";
+    begin
+        ItemJnlBatchPostMgmt.SetSuppressCommit(true);
+        ItemJnlBatchPostMgmt.Run(ItemJnlLine);
+    end;
     #endregion SOR UNPACK PACKAGE
 
     #region HELPER
@@ -5352,7 +6024,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             exit(false); // Failed
         end;
         // until Rec.Next() = 0;
-        exit(true); // SuccessGenerateRecReserveEntryItemJnlLine
+        exit(true); // Success process posting
     end;
 
     /// <summary>Deletes all <b>marked Item Journal Lines</b> and their associated <b>Reservation Entries</b> before committing the transaction.</summary>
@@ -5549,6 +6221,47 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
             exit('');
     end;
 
+    procedure GetLastLineNo_SORUnpackCurrentDetailResult(SORUnpackHeaderNoCode: Code[20]): Integer
+    var
+        SORCurrentUnpckLine: Record "PMP15 SOR Unpack Curr-Det. Res";
+    begin
+        SORCurrentUnpckLine.Reset();
+        SORCurrentUnpckLine.SetCurrentKey("Document No.", "Line No.");
+        SORCurrentUnpckLine.SetRange("Document No.", SORUnpackHeaderNoCode);
+        SORCurrentUnpckLine.SetAscending("Line No.", false);
+        if SORCurrentUnpckLine.FindFirst() then begin
+            exit(SORCurrentUnpckLine."Line No.");
+        end;
+    end;
+
+    procedure CheckIsLocationBinMandatory(LocationCode: Code[10]): Boolean
+    var
+        LocationRec: Record Location;
+    begin
+        LocationRec.Reset();
+        if LocationRec.Get(LocationCode) then begin
+            exit(LocationRec."Bin Mandatory");
+        end;
+    end;
+
+    // procedure ConvertBinStepTypeEnum_toSortationStepEnum(StepEnum: Enum "PMP15 Bin Step-Type"): Enum "PMP15 Sortation Step Enum"
+    // begin
+    //     case StepEnum of
+    //         StepEnum::"0":
+    //             exit(Enum::"PMP15 Sortation Step Enum"::"0");
+    //         StepEnum::"1":
+    //             exit(Enum::"PMP15 Sortation Step Enum"::"1");
+    //         StepEnum::"2":
+    //             exit(Enum::"PMP15 Sortation Step Enum"::"2");
+    //         StepEnum::"3":
+    //             exit(Enum::"PMP15 Sortation Step Enum"::"3");
+    //         StepEnum::"4":
+    //             exit(Enum::"PMP15 Sortation Step Enum"::"4");
+    //         else
+    //             exit(Enum::"PMP15 Sortation Step Enum"::" ");
+    //     end;
+    // end;
+
     #region ERROR HELPER
     /// <summary>Opens the Extended Company Setup page for configuration review.</summary>
     /// <remarks>This procedure retrieves the Extended Company Setup record and opens the corresponding configuration page for user interaction.</remarks>
@@ -5634,7 +6347,12 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
     end;
 
     [IntegrationEvent(false, false)]
-    local procedure OnBeforeInsert(var SORInspectPkg: Record "PMP15 SOR Inspection Pkg Headr"; var IsHandled: Boolean)
+    local procedure OnBeforeInsertSORInspectionPkgHeader(var SORInspectPkgHeader: Record "PMP15 SOR Inspection Pkg Headr"; var IsHandled: Boolean)
+    begin
+    end;
+
+    [IntegrationEvent(false, false)]
+    local procedure OnBeforeInsertSORUnpackingPkgHeader(var SORUnpackHeader: Record "PMP15 Sortation Unpack Package"; var IsHandled: Boolean)
     begin
     end;
 }

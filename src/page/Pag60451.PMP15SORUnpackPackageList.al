@@ -128,4 +128,20 @@ page 60451 "PMP15 SOR Unpack Package List"
             }
         }
     }
+
+    trigger OnOpenPage()
+    begin
+        ExtCompanySetup.Get();
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Unpack Package Nos."));
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Output Jnl. Template"));
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Output Jnl. Batch"));
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Consum.Jnl. Template"));
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Consum.Jnl. Batch"));
+    end;
+
+    protected var
+        ExtCompanySetup: Record "PMP07 Extended Company Setup";
+        NoSeriesMgmt: Codeunit "No. Series";
+        PMPAppLogicMgmt: Codeunit "PMP02 App Logic Management";
+        SortProdOrdMgmt: Codeunit "PMP15 Sortation PO Mgmt";
 }
