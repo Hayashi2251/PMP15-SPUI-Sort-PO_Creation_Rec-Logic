@@ -81,7 +81,40 @@ page 60423 "PMP15 SOR Inspection Pkg. List"
                     Caption = 'Lot No.';
                     ToolTip = 'Specifies the value of the Lot No. field.', Comment = '%';
                 }
+                field("Has Rejected Line"; Rec."Has Rejected Line")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Has Rejected Line?';
+                    Visible = false;
+                    ToolTip = 'Specifies the value of the Has Rejected Line? field.', Comment = '%';
+                }
+                field("Total Inspection Line"; Rec."Total Inspection Line")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Total Line';
+                    Visible = false;
+                    ToolTip = 'Specifies the value of the Total Line field.', Comment = '%';
+                }
+                field("Total Rejected Line"; Rec."Total Rejected Line")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Total Rejected Line';
+                    Visible = false;
+                    ToolTip = 'Specifies the value of the Total Rejected Line field.', Comment = '%';
+                }
+                field("Total Rework Line"; Rec."Total Rework Line")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Total Rework Line';
+                    Visible = false;
+                    ToolTip = 'Specifies the value of the Total Rework Line field.', Comment = '%';
+                }
             }
         }
     }
+
+    trigger OnAfterGetCurrRecord()
+    begin
+        Rec.CalcFields("Total Inspection Line", "Has Rejected Line", "Total Rejected Line", "Total Rework Line", "Total Hold Line");
+    end;
 }

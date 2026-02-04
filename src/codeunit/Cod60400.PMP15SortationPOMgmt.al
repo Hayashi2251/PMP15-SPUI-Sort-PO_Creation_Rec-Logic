@@ -3800,6 +3800,10 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         Rec."To Bin Code" := BinRec.Code;
                     end;
                 end;
+            Rec.Result::Rejected:
+                begin
+                    Rec."To Bin Code" := Rec."From Bin Code";
+                end;
         end;
     end;
 
@@ -3824,6 +3828,30 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 PackageNoInfor.Modify();
             end;
         end;
+    end;
+
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Purch.-Post", OnInsertReturnShipmentLineOnAfterReturnShptLineInit, '', false, false)]
+    local procedure PurchPost_OnInsertReturnShipmentLineOnAfterReturnShptLineInit(var ReturnShptHeader: Record "Return Shipment Header"; var ReturnShptLine: Record "Return Shipment Line"; var PurchLine: Record "Purchase Line"; var xPurchLine: Record "Purchase Line"; var CostBaseAmount: Decimal; WhseShip: Boolean; WhseReceive: Boolean)
+    begin
+        ReturnShptLine."PMP15 SOR Inspect. PkgList No." := PurchLine."PMP15 SOR Inspect. PkgList No.";
+    end;
+
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Purch.-Post", OnBeforePurchCrMemoLineInsert, '', false, false)]
+    local procedure PurchPost_OnBeforePurchCrMemoLineInsert(var PurchCrMemoLine: Record "Purch. Cr. Memo Line"; var PurchCrMemoHdr: Record "Purch. Cr. Memo Hdr."; var PurchLine: Record "Purchase Line"; CommitIsSupressed: Boolean; var xPurchaseLine: Record "Purchase Line")
+    begin
+        PurchCrMemoLine."PMP15 SOR Inspect. PkgList No." := PurchLine."PMP15 SOR Inspect. PkgList No.";
+    end;
+
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Purch.-Get Return Shipments", OnCreateInvLinesOnAfterCalcShouldInsertReturnRcptLine, '', false, false)]
+    local procedure PurchGetReturnShipments_OnCreateInvLinesOnAfterCalcShouldInsertReturnRcptLine(var ReturnShipmentHeader: Record "Return Shipment Header"; var ReturnShipmentLine: Record "Return Shipment Line"; var PurchaseHeader: Record "Purchase Header"; var ShouldInsertReturnRcptLine: Boolean; PurchLine: Record "Purchase Line")
+    begin
+        PurchLine."PMP15 SOR Inspect. PkgList No." := ReturnShipmentLine."PMP15 SOR Inspect. PkgList No.";
+    end;
+
+    [EventSubscriber(ObjectType::Table, Database::"Return Shipment Line", OnAfterCopyFieldsFromReturnShipmentLine, '', false, false)]
+    local procedure ReturnShipmentLine_OnAfterCopyFieldsFromReturnShipmentLine(var ReturnShipmentLine: Record "Return Shipment Line"; var PurchaseLine: Record "Purchase Line")
+    begin
+        PurchaseLine."PMP15 SOR Inspect. PkgList No." := ReturnShipmentLine."PMP15 SOR Inspect. PkgList No.";
     end;
 
     // ONE OF THE MOST IMPORTANT FUNCTION IN THIS CODEUNIT
@@ -3926,6 +3954,8 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         if BinRec.FindFirst() then begin
                             SORInspectPkgLine."To Bin Code" := BinRec.Code;
                         end;
+                    end else if SORInspectPkgLine.Result in [SORInspectPkgLine.Result::Rejected] then begin
+                        SORInspectPkgLine."To Bin Code" := SORInspectPkgLine."From Bin Code";
                     end;
 
                     //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/16 - START >>>>>>>>>>>>>>>>>>>>>>>>>>}
@@ -3991,6 +4021,203 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 until PackageNoInfor.Next() = 0;
             end;
         end;
+    end;
+
+    procedure GetPackagetoInspectforPurchReturnOrder(var PurchHeader: Record "Purchase Header")
+    var
+        SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr";
+        SORInspectPkgLine: Record "PMP15 SOR Inspection Pkg. Line";
+        PurchaseLine: Record "Purchase Line";
+        PurchaseLineOld: Record "Purchase Line";
+        // BinContent: Record "Bin Content";
+        // BinRec: Record Bin;
+        // ProdItemTypeRec: Record "PMP07 Production Item Type";
+        // Item : Record Item;
+        ItemVariantRec: Record "Item Variant";
+        LastLineNo: Integer;
+        SORInspectListPage: Page "PMP15 SOR Inspection Pkg. List";
+    begin
+        SORInspectHeadr.Reset();
+        SORInspectPkgLine.Reset();
+        // PurchaseLine.Reset();
+        // BinRec.Reset();
+        // ProdItemTypeRec.Reset();
+        ExtCompanySetup.Get();
+        PMPAppLogicMgmt.ValidateExtendedCompanySetupwithAction(ExtCompanySetup.FieldNo("PMP15 SOR Location Code"));
+
+        SORInspectHeadr.CalcFields("Total Inspection Line", "Total Rejected Line", "Has Rejected Line");
+        SORInspectHeadr.SetRange("Has Rejected Line", true);
+        SORInspectHeadr.SetFilter("Total Rejected Line", '> 0');
+        Clear(SORInspectListPage);
+        SORInspectListPage.LookupMode(true);
+        SORInspectListPage.SetTableView(SORInspectHeadr);
+        if SORInspectListPage.RunModal() = Action::LookupOK then begin
+            Clear(SORInspectHeadr);
+            SORInspectHeadr.Reset();
+            SORInspectListPage.SetSelectionFilter(SORInspectHeadr);
+            if SORInspectHeadr.FindSet() then
+                repeat
+                    SORInspectHeadr.CalcFields("Total Inspection Line", "Total Rejected Line", "Has Rejected Line");
+                    SORInspectPkgLine.SetRange("Document No.", SORInspectHeadr."No.");
+                    SORInspectPkgLine.SetRange(Result, SORInspectPkgLine.Result::Rejected);
+                    if SORInspectPkgLine.FindSet() then
+                        repeat
+                            PurchaseLine.Reset();
+                            PurchaseLineOld.Reset();
+                            Clear(LastLineNo);
+
+                            PurchaseLineOld.SetRange("Document No.", PurchHeader."No.");
+                            PurchaseLineOld.SetRange("Document Type", PurchaseLineOld."Document Type"::"Return Order");
+                            PurchaseLineOld.SetRange(Type, PurchaseLineOld.Type::Item);
+                            PurchaseLineOld.SetRange("No.", SORInspectPkgLine."Sorted Item No.");
+                            PurchaseLineOld.SetRange("Variant Code", SORInspectPkgLine."Sorted Variant Code");
+                            PurchaseLineOld.SetRange("Location Code", SORInspectPkgLine."Location Code");
+                            PurchaseLineOld.SetRange("Unit of Measure", SORInspectPkgLine."Unit of Measure Code");
+                            PurchaseLineOld.SetRange("Bin Code", SORInspectPkgLine."To Bin Code");
+                            PurchaseLineOld.SetRange("PMP15 SOR Inspect. PkgList No.", SORInspectPkgLine."Document No.");
+                            if PurchaseLineOld.FindFirst() then begin
+                                PurchaseLineOld.Quantity += PurchaseLineOld.Quantity + SORInspectPkgLine.Quantity;
+                                PurchaseLineOld.Modify();
+                                GenerateRecReserveEntryItemJnlLineInspect(PurchaseLineOld, SORInspectHeadr, SORInspectPkgLine);
+                            end else begin
+                                PurchaseLine.SetRange("Document No.", PurchHeader."No.");
+                                if PurchaseLine.FindLast() then begin
+                                    LastLineNo := PurchaseLine."Line No.";
+                                end;
+                                if LastLineNo mod 10000 > 0 then
+                                    LastLineNo += LastLineNo mod 10000
+                                else
+                                    LastLineNo += 10000;
+
+                                PurchaseLine.Reset();
+                                PurchaseLine.Init();
+                                PurchaseLine."Document Type" := PurchaseLine."Document Type"::"Return Order";
+                                PurchaseLine."Document No." := PurchHeader."No.";
+                                PurchaseLine."Line No." := LastLineNo;
+                                PurchaseLine.Validate(Type, PurchaseLine.Type::Item);
+                                PurchaseLine.Validate("No.", SORInspectPkgLine."Sorted Item No.");
+                                PurchaseLine.Validate("Variant Code", SORInspectPkgLine."Sorted Variant Code");
+                                PurchaseLine.Validate(Quantity, SORInspectPkgLine.Quantity);
+                                PurchaseLine.Validate("Location Code", SORInspectPkgLine."Location Code");
+                                PurchaseLine."Bin Code" := SORInspectPkgLine."To Bin Code";
+                                PurchaseLine."PMP15 SOR Inspect. PkgList No." := SORInspectPkgLine."Document No.";
+                                PurchaseLine.Insert();
+                                GenerateRecReserveEntryItemJnlLineInspect(PurchaseLine, SORInspectHeadr, SORInspectPkgLine);
+                            end;
+                        until SORInspectPkgLine.Next() = 0;
+                until SORInspectHeadr.Next() = 0;
+        end;
+    end;
+
+    procedure GenerateRecReserveEntryItemJnlLineInspect(var PurchaseLine: Record "Purchase Line"; SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line")
+    var
+        PurchLineReserve: Codeunit "Purch. Line-Reserve";
+        Item: Record Item;
+        RecReservEntry: Record "Reservation Entry";
+        TrackingSpecification: Record "Tracking Specification";
+        TempTrackingSpecification: Record "Tracking Specification" temporary;
+        PackageNoInfo: Record "Package No. Information";
+        RemainingQty: Decimal;
+    begin
+        // Clear(SerLotPkgArr);
+        ItemTrackingCode.Reset();
+
+        Item.SetLoadFields("Item Tracking Code");
+        if not Item.Get(PurchaseLine."No.") then
+            Error('The specified Item No. "%1" could not be found. Please verify that the item exists in the system.', PurchaseLine."No.");
+
+        if Item."Item Tracking Code" = '' then
+            Error('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', PurchaseLine."No.");
+
+        ItemTrackingCode.Get(Item."Item Tracking Code");
+
+        PurchLineReserve.InitFromPurchLine(TempTrackingSpecification, PurchaseLine);
+        TempTrackingSpecification.Insert();
+        RemainingQty := SORInspectPkgLineRec.Quantity;
+
+        RetrieveLookupData(TempTrackingSpecification, true);
+        TempTrackingSpecification.Delete();
+        TempGlobalEntrySummary.Reset();
+        TempGlobalEntrySummary.SetFilter("Lot No.", SORInspectPkgLineRec."Lot No.");
+        TempGlobalEntrySummary.SetFilter("Package No.", SORInspectPkgLineRec."Package No.");
+        if TempGlobalEntrySummary.Count > 0 then begin
+            if TempGlobalEntrySummary.FindSet() then
+                repeat
+                    if RemainingQty <= 0 then begin
+                        RemainingQty := RemainingQty - TempGlobalEntrySummary."Total Quantity";
+                        InsertReservEntryRecfromTempTrackSpecPurchLine(RecReservEntry, TempTrackingSpecification, PurchaseLine, SORInspectHeadr, SORInspectPkgLineRec, TempGlobalEntrySummary, RemainingQty);
+                        exit;
+                    end else begin
+                        InsertReservEntryRecfromTempTrackSpecPurchLine(RecReservEntry, TempTrackingSpecification, PurchaseLine, SORInspectHeadr, SORInspectPkgLineRec, TempGlobalEntrySummary, TempGlobalEntrySummary."Total Quantity");
+                    end;
+                until TempGlobalEntrySummary.Next() = 0;
+        end else begin
+            TempGlobalEntrySummary.Reset();
+            TempGlobalEntrySummary.DeleteAll();
+
+            ItemTrackingCode.Get(Item."Item Tracking Code");
+
+            TempGlobalEntrySummary.Init();
+            TempGlobalEntrySummary."Entry No." := LastSummaryEntryNo + 1;
+            LastSummaryEntryNo := TempGlobalEntrySummary."Entry No.";
+
+            TempGlobalEntrySummary."Lot No." := SORInspectPkgLineRec."Lot No.";
+            TempGlobalEntrySummary."Package No." := SORInspectPkgLineRec."Package No.";
+
+            TempGlobalEntrySummary."Total Quantity" := PurchaseLine.Quantity;
+            TempGlobalEntrySummary.Insert();
+            InsertReservEntryRecfromTempTrackSpecPurchLine(RecReservEntry, TempTrackingSpecification, PurchaseLine, SORInspectHeadr, SORInspectPkgLineRec, TempGlobalEntrySummary, TempGlobalEntrySummary."Total Quantity");
+        end;
+    end;
+
+    local procedure InsertReservEntryRecfromTempTrackSpecPurchLine(var RecReservEntry: Record "Reservation Entry"; var TempTrackingSpecification: Record "Tracking Specification" temporary; var PurchaseLine: Record "Purchase Line"; SORInspectHeadr: Record "PMP15 SOR Inspection Pkg Headr"; SORInspectPkgLineRec: Record "PMP15 SOR Inspection Pkg. Line"; TempGlobalEntrySummary: Record "Entry Summary" temporary; QtytoInsert: Decimal)
+    var
+        PurchLineReserve: Codeunit "Purch. Line-Reserve";
+        UOMMgt: Codeunit "Unit of Measure Management";
+        SourceTrackingSpecification: Record "Tracking Specification";
+        ChangeType: Option Insert,Modify,FullDelete,PartDelete,ModifyAll;
+        ItemTrackingLine: Page "Item Tracking Lines";
+        TypeHelper: Codeunit "Type Helper";
+        Item: Record Item;
+        RecRef: RecordRef;
+    begin
+        Item.Get(PurchaseLine."No.");
+        RecRef.GetTable(Item);
+        if Item."Item Tracking Code" = '' then
+            PMPAppLogicMgmt.ErrorRecordRefwithAction(RecRef, Item.FieldNo(Description), Page::"Item Card", 'Empty Field', StrSubstNo('The Item "%1" does not have an assigned Item Tracking Code. Please configure the Item Tracking Code in the Item Card before continuing.', Item."No."));
+
+        ItemTrackingCode.Get(Item."Item Tracking Code");
+
+        if not TempGlobalEntrySummary.HasQuantity() then exit;
+        TempGlobalEntrySummary.UpdateAvailable();
+
+        PurchLineReserve.InitFromPurchLine(SourceTrackingSpecification, PurchaseLine);
+        ItemTrackingLine.SetSourceSpec(SourceTrackingSpecification, 0D);
+
+        TempTrackingSpecification.Init;
+        TempTrackingSpecification.TransferFields(SourceTrackingSpecification);
+        TempTrackingSpecification.SetItemData(SourceTrackingSpecification."Item No.", SourceTrackingSpecification.Description, SourceTrackingSpecification."Location Code", SourceTrackingSpecification."Variant Code", SourceTrackingSpecification."Bin Code", SourceTrackingSpecification."Qty. per Unit of Measure");
+        TempTrackingSpecification.Validate("Item No.", SourceTrackingSpecification."Item No.");
+        TempTrackingSpecification.Validate("Location Code", SourceTrackingSpecification."Location Code");
+        TempTrackingSpecification.Validate("Creation Date", DT2Date(TypeHelper.GetCurrentDateTimeInUserTimeZone()));
+        TempTrackingSpecification.Validate("Source Type", SourceTrackingSpecification."Source Type");
+        TempTrackingSpecification.Validate("Source Subtype", SourceTrackingSpecification."Source Subtype");
+        TempTrackingSpecification.Validate("Source ID", SourceTrackingSpecification."Source ID");
+        TempTrackingSpecification.Validate("Source Batch Name", SourceTrackingSpecification."Source Batch Name");
+        TempTrackingSpecification.Validate("Source Prod. Order Line", SourceTrackingSpecification."Source Prod. Order Line");
+        TempTrackingSpecification.Validate("Source Ref. No.", SourceTrackingSpecification."Source Ref. No.");
+
+        if (TempGlobalEntrySummary."Serial No." <> '') AND (ItemTrackingCode."SN Specific Tracking") then
+            TempTrackingSpecification.Validate("Serial No.", TempGlobalEntrySummary."Serial No.");
+        if (TempGlobalEntrySummary."Lot No." <> '') AND (ItemTrackingCode."Lot Specific Tracking") then
+            TempTrackingSpecification.Validate("Lot No.", TempGlobalEntrySummary."Lot No.");
+        if (TempGlobalEntrySummary."Package No." <> '') AND (ItemTrackingCode."Package Specific Tracking") then
+            TempTrackingSpecification.Validate("Package No.", TempGlobalEntrySummary."Package No.");
+
+        TempTrackingSpecification.Validate("Quantity (Base)", UOMMgt.CalcBaseQty(QtytoInsert, TempTrackingSpecification."Qty. per Unit of Measure"));
+        TempTrackingSpecification.Validate("Qty. to Handle (Base)", UOMMgt.CalcBaseQty(QtytoInsert, TempTrackingSpecification."Qty. per Unit of Measure"));
+        // TempTrackingSpecification.Validate("Qty. to Invoice (Base)", UOMMgt.CalcBaseQty(QtytoInsert, TempTrackingSpecification."Qty. per Unit of Measure"));
+        ItemTrackingLine.RegisterChange(TempTrackingSpecification, TempTrackingSpecification, ChangeType::Insert, false);
     end;
 
     /// <summary>Releases the Sortation Inspection Packing List document if it is in Open status.</summary>
@@ -4266,6 +4493,10 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 tempItemJnlLine."PMP15 Sub Merk 4" := SORInspectPkgLineRec."New Sub Merk 4";
                 tempItemJnlLine."PMP15 Sub Merk 5" := SORInspectPkgLineRec."New Sub Merk 5";
                 tempItemJnlLine."PMP15 L/R" := SORInspectPkgLineRec."New L/R";
+
+                if SORInspectPkgLineRec.Result = SORInspectPkgLineRec.Result::Rework then begin
+                    tempItemJnlLine."PMP15 Rework" := true;
+                end;
             end;
             #endregion OUTPUT JOURNAL INSPECTION
         end else if IJLEntryType = IJLEntryType::Consumption then begin
@@ -4319,6 +4550,10 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                 tempItemJnlLine."PMP15 Sub Merk 4" := SORInspectPkgLineRec."Sub Merk 4";
                 tempItemJnlLine."PMP15 Sub Merk 5" := SORInspectPkgLineRec."Sub Merk 5";
                 tempItemJnlLine."PMP15 L/R" := SORInspectPkgLineRec."L/R";
+
+                if SORInspectPkgLineRec.Result = SORInspectPkgLineRec.Result::Rework then begin
+                    tempItemJnlLine."PMP15 Rework" := true;
+                end;
                 //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
             end;
             #endregion CONSUMPTION JOURNAL INSPECTION
@@ -4414,7 +4649,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         ProdOrdLineRec.Validate("Item No.", SORInspectPkgLineRec."New Item Code");
                         ProdOrdLineRec."Location Code" := ExtCompanySetup."PMP15 SOR Location Code";
                         ProdOrdLineRec.Validate("Variant Code", SORInspectPkgLineRec.Standard);
-                        ProdOrdLineRec.Validate("Bin Code", SORInspectPkgLineRec."To Bin Code");
+                        ProdOrdLineRec."Bin Code" := SORInspectPkgLineRec."To Bin Code";
                         ProdOrdLineRec.Validate(Quantity, SORInspectPkgLineRec.Quantity);
                         ProdOrdLineRec.Validate("Unit of Measure Code", SORInspectPkgLineRec."Unit of Measure Code");
 
@@ -4429,6 +4664,7 @@ codeunit 60400 "PMP15 Sortation PO Mgmt"
                         //     // ProdOrdLineRec.Validate("Variant Code", PackageNoInfor."PMP15 Unsorted Variant Code"); // Before
                         // end;
                         //{<<<<<<<<<<<<<<<<<<<<<<<<<< PMP15 - SW - 2026/01/17 - FINISH >>>>>>>>>>>>>>>>>>>>>>>>>>}
+                    end else if SORInspectPkgLineRec.Result = SORInspectPkgLineRec.Result::Rework then begin
                     end;
                     ProdOrdLineRec."Scrap %" := ItemRec."Scrap %";
                     ProdOrdLineRec."Due Date" := ProdOrderRec."Due Date";

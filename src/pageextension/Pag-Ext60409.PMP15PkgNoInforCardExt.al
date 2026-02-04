@@ -54,40 +54,51 @@ pageextension 60409 "PMP15 Pkg No. Infor Card Ext" extends "Package No. Informat
     actions
     {
         // // LA TEMPORAIRE
-        // addlast(processing)
-        // {
-        //     action(CheckPackageAbleToSell)
-        //     {
-        //         ApplicationArea = All;
-        //         Caption = 'Check Able To Sell';
-        //         Enabled = CheckPackageAbleToSell_Visibility;
-        //         Visible = CheckPackageAbleToSell_Visibility;
-        //         trigger OnAction()
-        //         var
-        //             SORMgmt: Codeunit "PMP15 Sortation PO Mgmt";
-        //             SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary;
-        //             SORProdOrdDetLine: Record "PMP15 Sortation Detail Quality";
-        //         begin
-        //             Clear(SORMgmt);
-        //             SORProdOrdDetLine.Reset();
+        addlast(processing)
+        {
+            //     action(CheckPackageAbleToSell)
+            //     {
+            //         ApplicationArea = All;
+            //         Caption = 'Check Able To Sell';
+            //         Enabled = CheckPackageAbleToSell_Visibility;
+            //         Visible = CheckPackageAbleToSell_Visibility;
+            //         trigger OnAction()
+            //         var
+            //             SORMgmt: Codeunit "PMP15 Sortation PO Mgmt";
+            //             SortProdOrderRec: Record "PMP15 Sortation PO Recording" temporary;
+            //             SORProdOrdDetLine: Record "PMP15 Sortation Detail Quality";
+            //         begin
+            //             Clear(SORMgmt);
+            //             SORProdOrdDetLine.Reset();
 
-        //             SortProdOrderRec.Init();
-        //             SortProdOrderRec."Entry No." := 1;
-        //             SortProdOrderRec."Unsorted Item No." := Rec."PMP15 Unsorted Item No.";
-        //             SortProdOrderRec."Unsorted Variant Code" := Rec."PMP15 Unsorted Variant Code";
+            //             SortProdOrderRec.Init();
+            //             SortProdOrderRec."Entry No." := 1;
+            //             SortProdOrderRec."Unsorted Item No." := Rec."PMP15 Unsorted Item No.";
+            //             SortProdOrderRec."Unsorted Variant Code" := Rec."PMP15 Unsorted Variant Code";
 
-        //             SORProdOrdDetLine.SetCurrentKey("Entry No.");
-        //             SORProdOrdDetLine.SetRange("Item No.", Rec."Item No.");
-        //             SORProdOrdDetLine.SetRange("Variant Code", Rec."Variant Code");
-        //             SORProdOrdDetLine.SetRange("Package No.", Rec."Package No.");
-        //             SORProdOrdDetLine.SetAscending("Entry No.", true);
-        //             if SORProdOrdDetLine.FindLast() then begin
-        //                 SORMgmt.CheckPkgNoInfoAbletoSell(SORProdOrdDetLine, SortProdOrderRec);
-        //             end;
+            //             SORProdOrdDetLine.SetCurrentKey("Entry No.");
+            //             SORProdOrdDetLine.SetRange("Item No.", Rec."Item No.");
+            //             SORProdOrdDetLine.SetRange("Variant Code", Rec."Variant Code");
+            //             SORProdOrdDetLine.SetRange("Package No.", Rec."Package No.");
+            //             SORProdOrdDetLine.SetAscending("Entry No.", true);
+            //             if SORProdOrdDetLine.FindLast() then begin
+            //                 SORMgmt.CheckPkgNoInfoAbletoSell(SORProdOrdDetLine, SortProdOrderRec);
+            //             end;
 
-        //         end;
-        //     }
-        // }
+            //         end;
+            //     }
+
+            // action(ClearInspection)
+            // {
+            //     ApplicationArea = All;
+            //     Caption = 'Clear SOR Inspect No.';
+            //     trigger OnAction()
+            //     begin
+            //         Clear(Rec."PMP15 SOR Inspection Pckg. No.");
+            //         Rec.Modify();
+            //     end;
+            // }
+        }
     }
     #endregion Actions
 
